@@ -7,6 +7,25 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-04 – #5 Ismételt mondatok (take-ek) megjelölése és kivágása
+
+**Mit:** Szekvencia ▸ LIKE ▸ „Ismételt mondatok megjelölése” és „Megjelölt ismétlések kivágása”.
+Az elhagyott próbálkozások piros tartományjelölőt kapnak (megjegyzésben: az elhagyott és a
+megtartott szöveg); a felhasználó törli azoknak a jelölőjét, amelyeket megtartana; a kivágás csak
+a megmaradt jelölőket vágja ki, egy visszavonható lépésben. Az utolsó változat mindig megmarad.
+- ÚJ (átvett): `crates/engine/src/like_tools/repeats.rs` + `repeats_tests.rs` – a per-simmons/filmcraft
+  fork determinisztikus take-felismerője (MIT OR Apache-2.0), forrásmegjelöléssel. LIKE-módosítás:
+  magyar gyakori szavak és töltelékszavak; a `ripple_delete_ranges` hívás a mi alapunkhoz igazítva.
+- HOZZÁADÁS: `like_tools.rs` – `like.markRetakes`, `like.cutMarkedRetakes`. Upstream-fájl nem változott.
+
+**Teszt:** az átvett tesztek + 2 magyar felismerési teszt + 2 folyamatteszt (jelölés → kivágás;
+törölt jelölő → a take megmarad). 30 teszt zöld.
+
+**Kapcsolódó javítás a LIKE Diktálásban** (`98b5b92`): egy feliratsor sem lehet hosszabb 42
+karakternél akkor sem, ha a blokk összhossza belefér (a próbán 45 karakteres sor jött ki).
+
+---
+
 ## 2026-11-04 – #4 Háttérben futó LIKE-feladatok
 
 **Mit:** a Magyar leirat, a Gyors durva vágás (ha még nincs leirat) és a Felirat AI-javítása

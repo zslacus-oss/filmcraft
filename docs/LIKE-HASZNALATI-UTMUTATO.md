@@ -18,7 +18,9 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 | 1. Importálás | Fájl ▸ Importálás… vagy húzd be a videót | a nyers felvétel a projektbe kerül |
 | 2. Szekvencia | húzd a klipet az idővonalra | elkészül a szekvencia |
 | 3. **Gyors durva vágás** | Szekvencia ▸ LIKE ▸ Gyors durva vágás | magyar leirat készül, majd kivágja a töltelékhangokat („ö", „öö", „hmm", „izé"…) és a 0,6 mp-nél hosszabb szüneteket, 0,12 mp levegőt hagyva |
-| 4. Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
+| 4. **Ismételt mondatok** | Szekvencia ▸ LIKE ▸ Ismételt mondatok megjelölése | minden elrontott, újrakezdett mondat korábbi próbálkozása piros tartományjelölőt kap; az utolsó változat érintetlen. Amelyiket meg akarod tartani, annak töröld a jelölőjét |
+| 5. Ismétlések kivágása | Szekvencia ▸ LIKE ▸ Megjelölt ismétlések kivágása | csak a megmaradt piros jelölők alatti részt vágja ki (Ctrl+Z-vel visszavonható) |
+| 5/b Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
 | 5. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
 | 6. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
 | 7. Kézi simítás | Ablak ▸ Munkaterületek ▸ Feliratok és grafika | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |

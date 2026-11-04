@@ -33,6 +33,8 @@ use crate::{EngineError, Result, Session};
 type Run = fn(&mut Session, &Value) -> Result<Value>;
 type Enabled = fn(&Session) -> std::result::Result<(), String>;
 
+pub mod repeats;
+
 const MENU: &[&str] = &["Sequence", "LIKE"];
 
 /// Hesitation sounds removed by the rough cut: never meaningful words.
@@ -590,6 +592,79 @@ pub fn engine_path_ok(path: &Path) -> bool {
     path.is_file()
 }
 
+// ---------------------------------------------------------------------------------------------
+// Retakes: the earlier attempts are marked for review (red range markers); the user deletes the
+// markers of takes to keep, then cuts the rest. The last reading is always kept.
+// ---------------------------------------------------------------------------------------------
+
+/// Name of the review markers; `like.cutMarkedRetakes` cuts exactly these.
+pub const RETAKE_MARKER: &str = "Ismételt take – kivágásra javasolt";
+const RETAKE_COLOR: &str = "#e53935";
+
+fn has_transcript(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if has_sequence_transcript(s) { Ok(()) } else { Err("the sequence has no transcript (Magyar leirat készítése first)".into()) }
+}
+
+fn retake_markers(s: &Session) -> Vec<(filmcraft_project::MarkerId, Tick, Tick)> {
+    s.active_sequence()
+        .map(|q| q.markers.iter().filter(|m| m.name == RETAKE_MARKER && m.duration > Tick::ZERO).map(|m| (m.id, m.start, m.duration)).collect())
+        .unwrap_or_default()
+}
+
+fn has_retake_markers(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if retake_markers(s).is_empty() { Err("there are no retake markers (Ismételt mondatok megjelölése first)".into()) } else { Ok(()) }
+}
+
+fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
+    let words = crate::transcript::sequence_words(s);
+    let hits = repeats::find_repeats(&words, &repeats::RepeatOptions::default());
+    let rate = s.sequence_rate();
+    // markers of an earlier run are replaced, not doubled
+    let old: Vec<u64> = retake_markers(s).iter().map(|(id, _, _)| id.0).collect();
+    if !old.is_empty() {
+        s.execute("markers.delete", json!({"markers": old}))?;
+    }
+    let mut marked = 0usize;
+    for h in &hits {
+        let to = h.cut.end.saturating_sub(1).max(h.cut.start);
+        let Some(r) = filmcraft_edit::transcript::word_range(&words, h.cut.start, to, rate) else { continue };
+        let earlier: Vec<&str> = words.get(h.cut.clone()).unwrap_or_default().iter().take(30).map(|w| w.text.as_str()).collect();
+        let later: Vec<&str> = words.get(h.later..(h.later + 12).min(words.len())).unwrap_or_default().iter().map(|w| w.text.as_str()).collect();
+        let comment = format!("Elhagyott próbálkozás: „{}”\nMegtartott változat: „{} …”", earlier.join(" "), later.join(" "));
+        s.execute(
+            "markers.addRange",
+            json!({"time": r.start.0, "duration": r.duration.0, "name": RETAKE_MARKER, "comment": comment, "color": RETAKE_COLOR, "author": "LIKE"}),
+        )?;
+        marked += 1;
+    }
+    s.toast(if marked == 0 {
+        "Nem találtam ismételt mondatot".to_string()
+    } else {
+        format!(
+            "{marked} ismételt próbálkozás megjelölve pirossal. Amelyiket meg akarod tartani, annak töröld a jelölőjét, majd: Megjelölt ismétlések kivágása"
+        )
+    });
+    Ok(json!({"marked": marked}))
+}
+
+fn cut_marked_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
+    let marks = retake_markers(s);
+    if marks.is_empty() {
+        return Err(bad("like.cutMarkedRetakes", "there are no retake markers"));
+    }
+    let ids: Vec<u64> = marks.iter().map(|(id, _, _)| id.0).collect();
+    let ranges: Vec<filmcraft_time::TimeRange> = marks.iter().map(|(_, start, dur)| filmcraft_time::TimeRange { start: *start, duration: *dur }).collect();
+    let n = ranges.len();
+    // the markers go first: they sit on the ranges that disappear
+    s.execute("markers.delete", json!({"markers": ids}))?;
+    let total = s.edit_sequence("Ismétlések kivágása", |q, ctx, _| Ok(filmcraft_edit::transcript::ripple_delete_ranges(q, ranges, ctx)))?;
+    let secs = format!("{:.1}", total.0 as f64 / filmcraft_time::TICKS_PER_SECOND as f64).replace('.', ",");
+    s.toast(format!("{n} ismételt próbálkozás kivágva ({secs} mp)"));
+    Ok(json!({"removed": n, "ticks": total.0}))
+}
+
 pub fn commands() -> Vec<CommandSpec> {
     let mut v = vec![
         spec(
@@ -604,7 +679,11 @@ pub fn commands() -> Vec<CommandSpec> {
         spec("like.correctCaptions", "Felirat AI-javítása (helyesírás, ragozás)", r#"{"track":id|"C1"?}"#, has_engine_and_captions, correct_captions),
         spec("like.moveWordNext", "Utolsó szó át a következő feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, true)),
         spec("like.moveWordPrev", "Első szó vissza az előző feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, false)),
+        spec("like.markRetakes", "Ismételt mondatok megjelölése", "{}", has_transcript, mark_retakes),
+        spec("like.cutMarkedRetakes", "Megjelölt ismétlések kivágása", "{}", has_retake_markers, cut_marked_retakes),
     ];
+    // the ported detector's own commands (agents, tests); not in menus
+    v.extend(repeats::commands());
     let mut settings = spec("like.openEngineSettings", "LIKE motor beállításai (szótár, modell, AI)…", "{}", engine_installed, open_engine_settings);
     settings.journal = false;
     v.push(settings);
@@ -652,9 +731,12 @@ mod tests {
 
     #[test]
     fn commands_live_under_sequence_like() {
-        for c in commands() {
-            assert!(c.id.starts_with("like."));
-            assert_eq!(c.menu, MENU);
+        for c in commands().into_iter().filter(|c| c.id.starts_with("like.")) {
+            assert_eq!(c.menu, MENU, "{}", c.id);
+        }
+        // the ported detector's commands stay out of the menus
+        for c in commands().into_iter().filter(|c| !c.id.starts_with("like.")) {
+            assert!(c.menu.is_empty(), "{}", c.id);
         }
     }
 }
