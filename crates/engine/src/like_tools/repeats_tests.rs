@@ -331,3 +331,19 @@ fn a_deleted_review_marker_keeps_its_take() {
     assert!(s.execute("like.cutMarkedRetakes", json!({})).is_err());
     assert_eq!(s.active_sequence().unwrap().duration(), before);
 }
+
+/// Élő próba (2026-11-04): a felismerő a két próbálkozást másképp tagolta.
+#[test]
+fn a_restart_split_into_different_words_is_found() {
+    let (w, h) = find("Az elsős legfontosabb, hogy az AI időt | az elsősleg fontosabb, hogy az AI időt spórol a napi adminisztrációban.");
+    assert_eq!(h.len(), 1, "{h:?}");
+    assert!(cut_text(&w, &h[0]).starts_with("Az elsős legfontosabb"), "{}", cut_text(&w, &h[0]));
+    assert_eq!(w[h[0].later].text, "az");
+}
+
+#[test]
+fn unrelated_words_that_join_alike_are_not_enough() {
+    // "a fa" / "afa" agree when joined but are too short to prove anything
+    let (_, h) = find("Ma a fa kint áll | Ma afa kint áll");
+    assert!(h.is_empty(), "{h:?}");
+}

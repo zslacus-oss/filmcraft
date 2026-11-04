@@ -381,6 +381,30 @@ fn compare(toks: &[(usize, String)], i: usize, j: usize, min_words: usize) -> Op
         return None;
     }
     let (a, b) = (i + exact, j + exact);
+    // LIKE: the recogniser split the same speech into words differently ("elsős legfontosabb" /
+    // "elsősleg fontosabb"): 1–3 words of A spell exactly what 1–3 words of B spell, then at
+    // least 2 more words are shared.
+    let joined = |from: usize, n: usize, limit: usize| -> Option<String> {
+        (from + n <= limit).then(|| toks.get(from..from + n).map(|t| t.iter().map(|w| w.1.as_str()).collect::<String>())).flatten()
+    };
+    for ka in 1..=3usize {
+        for kb in 1..=3usize {
+            if ka == 1 && kb == 1 {
+                continue; // a plain substitution, handled below
+            }
+            let (Some(x), Some(y)) = (joined(a, ka, j), joined(b, kb, toks.len())) else { continue };
+            if x.chars().count() < 6 || x != y {
+                continue;
+            }
+            let tail = run(a + ka, b + kb);
+            if tail >= 2 {
+                let matched = exact + ka + tail;
+                if matched >= min_words.max(4) {
+                    return Some((matched, matched, true));
+                }
+            }
+        }
+    }
     let options = [
         (1, run(a + 1, b + 1)), // substituted
         (1, run(a + 1, b)),     // A has a word B dropped

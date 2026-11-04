@@ -769,9 +769,76 @@ fn has_retake_markers(s: &Session) -> std::result::Result<(), String> {
     if retake_markers(s).is_empty() { Err("there are no retake markers (Ismételt mondatok megjelölése first)".into()) } else { Ok(()) }
 }
 
+/// Spoken edit cues: what the speaker says to mark a mistake ("ezt vágjuk ki", "elrontottam").
+const SPOKEN_CUES: &[&str] = &[
+    "ezt vágjuk ki",
+    "ezt vágd ki",
+    "ezt kivágjuk",
+    "ezt ki kell vágni",
+    "ki kell vágni",
+    "vágjuk ki",
+    "elrontottam",
+    "ez egy hiba volt",
+    "ez hiba volt",
+    "újrakezdem",
+    "kezdem újra",
+    "ezt újra mondom",
+];
+
+/// Longest stretch, in words, a cue reaches back for the clause it refers to.
+const CUE_REACH: usize = 15;
+
+/// Word ranges (`from..to`, inclusive end excluded) a spoken cue asks to cut: the clause before
+/// the cue (back to the previous comma or sentence end, at most [`CUE_REACH`] words) and the cue
+/// itself. Overlapping cues give overlapping ranges; the cut merges them.
+pub fn find_spoken_cuts(words: &[filmcraft_edit::transcript::SeqWord]) -> Vec<(std::ops::Range<usize>, String)> {
+    let norm: Vec<String> = words.iter().map(|w| repeats::normalize(&w.text)).collect();
+    let cues: Vec<Vec<&str>> = SPOKEN_CUES.iter().map(|c| c.split_whitespace().collect()).collect();
+    let ends_clause = |w: &str| w.trim_end_matches(['"', '\'', ')', '\u{201d}']).ends_with([',', '.', '!', '?', ';', ':', '…']);
+    let mut out: Vec<(std::ops::Range<usize>, String)> = Vec::new();
+    let mut i = 0;
+    while i < norm.len() {
+        // the longest cue that starts here
+        let hit = cues.iter().filter(|c| norm.get(i..i + c.len()).is_some_and(|w| w.iter().zip(c.iter()).all(|(a, b)| a == b))).map(|c| c.len()).max();
+        let Some(len) = hit else {
+            i += 1;
+            continue;
+        };
+        let end = i + len;
+        // back to the start of the clause before the cue; the word right before the cue may
+        // itself end the clause ("elrontottam, ezt vágjuk ki")
+        let mut start = i;
+        let mut k = i;
+        while k > 0 && i - k < CUE_REACH {
+            let prev = &words[k - 1].text;
+            let sentence_end = prev.trim_end_matches(['"', '\'', ')', '\u{201d}']).ends_with(['.', '!', '?', '…']);
+            // a comma right before the cue belongs to the mistake ("elrontottam, ezt vágjuk ki");
+            // a sentence end never does ("Ez jó volt. Elrontottam.")
+            if (k < i && ends_clause(prev)) || (k == i && sentence_end) {
+                break;
+            }
+            k -= 1;
+            start = k;
+        }
+        let cue: Vec<&str> = words[i..end].iter().map(|w| w.text.as_str()).collect();
+        let cue = cue.join(" ");
+        match out.last_mut() {
+            // cues side by side ("elrontottam, ezt vágjuk ki") are one cut
+            Some(last) if last.0.end >= i => {
+                last.0.end = end;
+                last.1 = cue;
+            }
+            _ => out.push((start..end, cue)),
+        }
+        i = end;
+    }
+    out
+}
+
 fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
     let words = crate::transcript::sequence_words(s);
     let hits = repeats::find_repeats(&words, &repeats::RepeatOptions::default());
+    let spoken = find_spoken_cuts(&words);
     let rate = s.sequence_rate();
     // markers of an earlier run are replaced, not doubled
     let old: Vec<u64> = retake_markers(s).iter().map(|(id, _, _)| id.0).collect();
@@ -791,14 +858,41 @@ fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
         )?;
         marked += 1;
     }
-    s.toast(if marked == 0 {
-        "Nem találtam ismételt mondatot".to_string()
+    let mut cues = 0usize;
+    for (range, cue) in &spoken {
+        let Some(r) = filmcraft_edit::transcript::word_range(&words, range.start, range.end.saturating_sub(1).max(range.start), rate) else { continue };
+        let said: Vec<&str> = words.get(range.clone()).unwrap_or_default().iter().take(30).map(|w| w.text.as_str()).collect();
+        let comment = format!("Szóbeli vágási jel („{cue}”): „{}”", said.join(" "));
+        s.execute(
+            "markers.addRange",
+            json!({"time": r.start.0, "duration": r.duration.0, "name": RETAKE_MARKER, "comment": comment, "color": RETAKE_COLOR, "author": "LIKE"}),
+        )?;
+        cues += 1;
+    }
+    s.toast(if marked + cues == 0 {
+        "Nem találtam ismételt mondatot vagy szóbeli vágási jelet".to_string()
     } else {
         format!(
-            "{marked} ismételt próbálkozás megjelölve pirossal. Amelyiket meg akarod tartani, annak töröld a jelölőjét, majd: Megjelölt ismétlések kivágása"
+            "{marked} ismételt próbálkozás és {cues} szóbeli vágási jel megjelölve pirossal. Amelyiket meg akarod tartani, annak töröld a jelölőjét, majd: Megjelölt ismétlések kivágása"
         )
     });
-    Ok(json!({"marked": marked}))
+    Ok(json!({"marked": marked, "spokenCues": cues}))
+}
+
+/// Overlapping or touching ranges merged, in time order.
+fn merge_ranges(mut ranges: Vec<filmcraft_time::TimeRange>) -> Vec<filmcraft_time::TimeRange> {
+    ranges.sort_by_key(|r| r.start);
+    let mut out: Vec<filmcraft_time::TimeRange> = Vec::with_capacity(ranges.len());
+    for r in ranges {
+        match out.last_mut() {
+            Some(last) if r.start <= last.start + last.duration => {
+                let end = (last.start + last.duration).max(r.start + r.duration);
+                last.duration = end - last.start;
+            }
+            _ => out.push(r),
+        }
+    }
+    out
 }
 
 fn cut_marked_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
@@ -807,7 +901,7 @@ fn cut_marked_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
         return Err(bad("like.cutMarkedRetakes", "there are no retake markers"));
     }
     let ids: Vec<u64> = marks.iter().map(|(id, _, _)| id.0).collect();
-    let ranges: Vec<filmcraft_time::TimeRange> = marks.iter().map(|(_, start, dur)| filmcraft_time::TimeRange { start: *start, duration: *dur }).collect();
+    let ranges = merge_ranges(marks.iter().map(|(_, start, dur)| filmcraft_time::TimeRange { start: *start, duration: *dur }).collect());
     let n = ranges.len();
     // the markers go first: they sit on the ranges that disappear
     s.execute("markers.delete", json!({"markers": ids}))?;
@@ -880,6 +974,64 @@ mod tests {
         assert_eq!(filler_list(&json!({})).len(), HU_FILLERS.len());
         assert_eq!(filler_list(&json!({"fillers": "extended"})).len(), HU_FILLERS.len() + HU_FILLERS_EXTENDED.len());
         assert_eq!(filler_list(&json!({"fillers": ["x"]})), vec!["x".to_string()]);
+    }
+
+    fn spoken(text: &str) -> Vec<filmcraft_edit::transcript::SeqWord> {
+        text.split_whitespace()
+            .enumerate()
+            .map(|(k, w)| filmcraft_edit::transcript::SeqWord {
+                text: w.into(),
+                start: Tick::from_seconds_f64(k as f64 * 0.4),
+                end: Tick::from_seconds_f64(k as f64 * 0.4 + 0.3),
+                clip: ClipId(1),
+                item: ItemId(1),
+                index: k,
+                track: 0,
+                speaker: None,
+                confidence: 1.0,
+            })
+            .collect()
+    }
+
+    fn cut_words(w: &[filmcraft_edit::transcript::SeqWord], r: &std::ops::Range<usize>) -> String {
+        w[r.clone()].iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ")
+    }
+
+    /// Élő próba (2026-11-04) szövegével.
+    #[test]
+    fn spoken_cues_mark_the_clause_before_them() {
+        let w = spoken("de még tudok mondani sokat, és most elrontottam, ezt vágjuk ki most sokat tud nekünk segíteni.");
+        let cuts = find_spoken_cuts(&w);
+        assert_eq!(cuts.len(), 1, "{cuts:?}");
+        assert_eq!(cut_words(&w, &cuts[0].0), "és most elrontottam, ezt vágjuk ki");
+        assert_eq!(cuts[0].1, "ezt vágjuk ki");
+    }
+
+    #[test]
+    fn a_cue_alone_and_the_longest_cue_win() {
+        let w = spoken("Ez jó volt. Elrontottam. Folytatom.");
+        let cuts = find_spoken_cuts(&w);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cut_words(&w, &cuts[0].0), "Elrontottam.");
+        // "ezt ki kell vágni" is one cue, not "ki kell vágni" after a stray "ezt"
+        let w = spoken("tele van hibával, ezt ki kell vágni oké");
+        let cuts = find_spoken_cuts(&w);
+        assert_eq!(cuts.len(), 1);
+        assert_eq!(cuts[0].1, "ezt ki kell vágni");
+        // the clause before the cue is the mistake it points at
+        assert_eq!(cut_words(&w, &cuts[0].0), "tele van hibával, ezt ki kell vágni");
+    }
+
+    #[test]
+    fn ordinary_speech_has_no_cues() {
+        assert!(find_spoken_cuts(&spoken("Ma a mesterséges intelligenciáról beszélek, és arról, hogyan segít.")).is_empty());
+    }
+
+    #[test]
+    fn overlapping_ranges_merge() {
+        let r = |a: i64, d: i64| filmcraft_time::TimeRange { start: Tick(a), duration: Tick(d) };
+        let m = merge_ranges(vec![r(50, 10), r(0, 10), r(5, 10), r(15, 5)]);
+        assert_eq!(m, vec![r(0, 20), r(50, 10)]);
     }
 
     #[test]

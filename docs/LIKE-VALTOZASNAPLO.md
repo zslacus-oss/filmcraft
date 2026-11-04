@@ -7,6 +7,29 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-04 – #7 Javítások az első élő próba alapján
+
+Élő próba: a tulajdonos 88 mp-es diktálása (szándékos „ööö”-kkel, szünetekkel, újrakezdett
+mondattal), ablak nélkül végigfuttatva (`filmcraft-cli run`). Eredmény a javítás előtt:
+87,6 → 58,2 mp; 15 szünet és 1 ismétlés kivágva; a teljes lánc 7 mp alatt.
+
+**Mit javítottunk:**
+- Take-felismerő: akkor is ismétlés, ha a felismerő másképp tagolta a szavakat („elsős
+  legfontosabb” / „elsősleg fontosabb”) – `like_tools/repeats.rs`, `compare`.
+- ÚJ: szóbeli vágási jelek („ezt vágjuk ki”, „ki kell vágni”, „elrontottam”, „ez egy hiba
+  volt”, „újrakezdem”): az utasítás és az előtte lévő tagmondat piros jelölőt kap (mondatvégen
+  túl nem nyúl); az egymás melletti jelek egy vágás. A kivágás az átfedő jelölőket összevonja.
+- LIKE Diktálás (`d56111b`): sor és blokk nem végződhet névelőre/kötőszóra; az AI-javítás
+  hibával áll le, ha egy adag sem sikerült (eddig csendben „kész”-t jelzett).
+
+**Megállapítás a tulajdonosnak:** a LIKE Diktálásban beállított AI-kulcs érvénytelen vagy
+visszavont – az AI-javításhoz és a poszt-szöveghez frissíteni kell.
+
+**Teszt:** 39 FilmCraft- és 174 Diktálás-teszt zöld, köztük a próba szövegéből készült
+regressziós tesztek.
+
+---
+
 ## 2026-11-04 – #6 Hangtisztítás, platform-export, poszt-szöveg
 
 **Mit:** Szekvencia ▸ LIKE ▸
