@@ -18,15 +18,16 @@
 //! * `like.openEngineSettings` — the engine's own window (dictionary, model, AI provider).
 
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::atomic::Ordering;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use serde_json::{Value, json};
 
-use filmcraft_project::ClipId;
+use filmcraft_project::{ClipId, ItemId, ItemKind, Transcript};
 use filmcraft_time::Tick;
 
-use crate::commands::{CommandSpec, bad, f64_p, has_seq, str_p, u64_p};
-use crate::external_speech::{ExternalTranscriber, WorkDir, run_engine, tick_to_ms};
+use crate::commands::{CommandSpec, bad, bool_p, f64_p, has_seq, str_p, u64_p};
+use crate::external_speech::{ExternalTranscriber, WorkDir, run_engine, run_engine_cancellable, tick_to_ms, transcribe_audio};
 use crate::{EngineError, Result, Session};
 
 type Run = fn(&mut Session, &Value) -> Result<Value>;
@@ -84,28 +85,258 @@ fn engine_exe(s: &Session, cmd: &str) -> Result<std::path::PathBuf> {
     session_engine(s).ok_or_else(|| bad(cmd, "the LIKE speech engine (LIKE Diktálás) is not installed"))
 }
 
-/// Make the external engine the session's transcriber.
-fn install_transcriber(s: &mut Session, cmd: &str) -> Result<()> {
+/// Make the external engine the session's transcriber, so Text ▸ Transcribe uses it too.
+fn install_transcriber(s: &mut Session, cmd: &str) -> Result<std::path::PathBuf> {
     let exe = engine_exe(s, cmd)?;
-    s.transcriber = Some(Arc::new(ExternalTranscriber::new(exe)));
-    Ok(())
+    s.transcriber = Some(Arc::new(ExternalTranscriber::new(exe.clone())));
+    Ok(exe)
+}
+
+// ---------------------------------------------------------------------------------------------
+// Background jobs: the engine runs on its own thread, shown in the Progress panel (`jobs.list`),
+// stopped by `jobs.cancel`; `poll` applies the result on the UI thread as one undo step.
+// ---------------------------------------------------------------------------------------------
+
+/// What to do once a transcript arrives.
+#[derive(Clone, Debug)]
+enum Then {
+    Nothing,
+    QuickCut(Value),
+    Captions(Value),
+}
+
+/// The result a LIKE job hands back to the UI thread.
+enum Output {
+    Transcripts { results: Vec<(ItemId, Transcript)>, then: Then },
+    Corrections { snapshot: Vec<(ClipId, String)>, fixed: Vec<(u64, String)>, warnings: Vec<String> },
+}
+
+struct Pending {
+    progress: Arc<filmcraft_export::Progress>,
+    out: Arc<Mutex<Option<Output>>>,
+}
+
+/// Jobs started by this module; matched to a session's jobs by their progress handle.
+static PENDING: Mutex<Vec<Pending>> = Mutex::new(Vec::new());
+
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+type Work = Box<dyn FnOnce(&filmcraft_export::Progress) -> std::result::Result<Output, String> + Send>;
+
+/// Start `work` as a background job (or run it now with `wait`); returns the job id.
+fn start_job(s: &mut Session, label: String, total: u64, wait: bool, work: Work) -> Result<u64> {
+    let id = s.jobs.iter().map(|j| j.id).max().unwrap_or(0) + 1;
+    let job = crate::Job { id, label, progress: Default::default(), result: Default::default() };
+    job.progress.total.store(total.max(1), Ordering::Relaxed);
+    let out: Arc<Mutex<Option<Output>>> = Arc::default();
+    let (prog, res, o) = (job.progress.clone(), job.result.clone(), out.clone());
+    let run = move || {
+        let t0 = web_time::Instant::now();
+        let r = work(&prog);
+        let seconds = t0.elapsed().as_secs_f64();
+        let report = match r {
+            Ok(output) => {
+                *lock(&o) = Some(output);
+                *lock(&prog.status) = "Kész".into();
+                Ok(filmcraft_export::Report { path: String::new(), frames: 0, seconds, bytes: 0, render_fps: 0.0, extra_files: Vec::new() })
+            }
+            Err(e) => {
+                *lock(&prog.status) = if e == "stopped" { "Megszakítva: semmi nem változott".into() } else { e.clone() };
+                Err(e)
+            }
+        };
+        *lock(&res) = Some(report);
+        prog.done.store(prog.total.load(Ordering::Relaxed), Ordering::Relaxed);
+        prog.finished.store(true, Ordering::Relaxed);
+    };
+    let run = crate::export_tools::guard_job(job.progress.clone(), job.result.clone(), run);
+    lock(&PENDING).push(Pending { progress: job.progress.clone(), out });
+    s.jobs.push(job);
+    if wait || cfg!(target_arch = "wasm32") {
+        run();
+        poll(s);
+        if let Some(Err(e)) = s.jobs.iter().find(|j| j.id == id).and_then(|j| lock(&j.result).clone()) {
+            return Err(EngineError::Other(e));
+        }
+    } else {
+        std::thread::Builder::new().name("like-engine".into()).spawn(run).map_err(|e| EngineError::Other(e.to_string()))?;
+    }
+    Ok(id)
+}
+
+/// Apply finished LIKE jobs of this session. Called once per UI frame from
+/// [`Session::poll_persistence`] and after synchronous runs.
+pub fn poll(s: &mut Session) {
+    let ready: Vec<(Arc<filmcraft_export::Progress>, Option<Output>)> = {
+        let mut pending = lock(&PENDING);
+        let mut ready = Vec::new();
+        pending.retain(|pj| {
+            let mine = s.jobs.iter().any(|j| Arc::ptr_eq(&j.progress, &pj.progress));
+            if !mine {
+                // another session's job, unless nobody else holds it any more
+                return Arc::strong_count(&pj.progress) > 1;
+            }
+            if !pj.progress.finished.load(Ordering::Relaxed) {
+                return true;
+            }
+            let cancelled = pj.progress.cancel.load(Ordering::Relaxed);
+            ready.push((pj.progress.clone(), lock(&pj.out).take().filter(|_| !cancelled)));
+            false
+        });
+        ready
+    };
+    for (progress, out) in ready {
+        match out {
+            Some(o) => {
+                if let Err(e) = apply(s, o) {
+                    s.error_toast("like", format!("LIKE: {e}"));
+                }
+            }
+            None => {
+                let err = s.jobs.iter().find(|j| Arc::ptr_eq(&j.progress, &progress)).and_then(|j| lock(&j.result).clone());
+                if let Some(Err(e)) = err
+                    && e != "stopped"
+                {
+                    s.error_toast("like", format!("LIKE: {e}"));
+                }
+            }
+        }
+    }
+}
+
+fn apply(s: &mut Session, out: Output) -> Result<Value> {
+    match out {
+        Output::Transcripts { results, then } => {
+            // the project may have changed meanwhile: keep only items that are still media
+            let results: Vec<(ItemId, Transcript)> =
+                results.into_iter().filter(|(i, _)| s.project.item(*i).is_some_and(|it| matches!(it.kind, ItemKind::Media(_)))).collect();
+            if results.is_empty() {
+                return Err(EngineError::Other("the transcribed clips are no longer in the project".into()));
+            }
+            let words: usize = results.iter().map(|(_, t)| t.words.len()).sum();
+            s.edit("Magyar leirat", move |pr, _| {
+                for (i, t) in results {
+                    pr.transcripts.insert(i, Arc::new(t));
+                }
+                Ok(())
+            })?;
+            s.toast(format!("Magyar leirat kész: {words} szó"));
+            match then {
+                Then::Nothing => Ok(json!({"words": words})),
+                Then::QuickCut(p) => {
+                    let r = quick_cut_now(s, &p)?;
+                    s.toast(quick_cut_message(&r));
+                    Ok(r)
+                }
+                Then::Captions(p) => {
+                    let r = create_captions_now(s, &p)?;
+                    s.toast("Magyar felirat kész");
+                    Ok(r)
+                }
+            }
+        }
+        Output::Corrections { snapshot, fixed, warnings } => {
+            let mut changed = 0usize;
+            for (id, text) in fixed {
+                let Some((_, old)) = snapshot.iter().find(|(c, _)| c.0 == id) else { continue };
+                // skip captions edited (or deleted) by hand while the model was working
+                let current = s.active_sequence().and_then(|q| q.find_caption(ClipId(id))).map(|(_, c)| c.text.clone());
+                if current.as_deref() != Some(old.as_str()) {
+                    continue;
+                }
+                if old.replace('\n', " ").split_whitespace().eq(text.split_whitespace()) {
+                    continue;
+                }
+                s.execute("captions.setText", json!({"caption": id, "text": wrap(&text, old.lines().count().max(1))}))?;
+                changed += 1;
+            }
+            s.toast(format!("AI-javítás kész: {changed} felirat változott"));
+            for w in &warnings {
+                s.error_toast("like", format!("LIKE: {w}"));
+            }
+            Ok(json!({"changed": changed, "warnings": warnings}))
+        }
+    }
+}
+
+/// Media items to transcribe: `items`, else the media of the active sequence's enabled audio clips.
+fn transcribe_targets(s: &Session, p: &Value) -> Vec<ItemId> {
+    let raw: Vec<ItemId> = match p.get("items").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_u64).map(ItemId).collect(),
+        None => s
+            .active_sequence()
+            .map(|q| q.audio_tracks.iter().flat_map(|t| t.items.iter()).filter(|it| it.enabled).map(|it| it.item).collect())
+            .unwrap_or_default(),
+    };
+    let mut out = Vec::new();
+    for i in raw {
+        if let Some((root, _, _)) = s.project.resolve_media(i)
+            && !out.contains(&root)
+        {
+            out.push(root);
+        }
+    }
+    out
+}
+
+fn start_transcribe(s: &mut Session, p: &Value, then: Then) -> Result<Value> {
+    let cmd = "like.transcribe";
+    let exe = install_transcriber(s, cmd)?;
+    let mut work = Vec::new();
+    for item in transcribe_targets(s, p) {
+        let Some(it) = s.project.item(item) else { continue };
+        let ItemKind::Media(m) = &it.kind else { continue };
+        let len = m.duration().to_units_floor(filmcraft_speech::SAMPLE_RATE as i64).max(0) as usize;
+        let name = it.name.clone();
+        let Some(src) = s.source(item) else { continue };
+        if !src.info().has_audio() || len == 0 {
+            continue;
+        }
+        work.push((item, name, src, len));
+    }
+    if work.is_empty() {
+        return Err(bad(cmd, "nothing to transcribe (open a sequence with audio clips)"));
+    }
+    let n = work.len();
+    let label = match work.first() {
+        Some((_, name, _, _)) if n == 1 => format!("Magyar leirat: {name}"),
+        _ => format!("Magyar leirat ({n} klip)"),
+    };
+    let wait = bool_p(p, "wait").unwrap_or(false);
+    let job = start_job(
+        s,
+        label,
+        n as u64,
+        wait,
+        Box::new(move |prog: &filmcraft_export::Progress| {
+            let mut results = Vec::new();
+            for (k, (item, name, src, len)) in work.into_iter().enumerate() {
+                if prog.cancel.load(Ordering::Relaxed) {
+                    return Err("stopped".into());
+                }
+                *lock(&prog.status) = format!("{name}: hang előkészítése");
+                let buf = src.audio(0, len, filmcraft_speech::SAMPLE_RATE).map_err(|e| format!("{name}: {e}"))?;
+                let audio = filmcraft_speech::downmix(&buf.channels);
+                *lock(&prog.status) = format!("{name}: magyar leirat készül ({}/{n})", k + 1);
+                let mut t = transcribe_audio(&exe, &audio, Some(&prog.cancel))?;
+                t.normalize();
+                results.push((item, t));
+                prog.done.store(k as u64 + 1, Ordering::Relaxed);
+            }
+            Ok(Output::Transcripts { results, then })
+        }),
+    )?;
+    Ok(json!({"job": job, "clips": n, "background": !wait}))
 }
 
 fn transcribe(s: &mut Session, p: &Value) -> Result<Value> {
-    install_transcriber(s, "like.transcribe")?;
-    let mut q = json!({"language": "hu", "diarize": false});
-    if let Some(items) = p.get("items") {
-        q["items"] = items.clone();
-    }
-    s.execute("transcript.generate", q)
+    start_transcribe(s, p, Then::Nothing)
 }
 
-fn ensure_transcript(s: &mut Session) -> Result<bool> {
-    if crate::transcript::sequence_words(s).is_empty() {
-        transcribe(s, &json!({}))?;
-        return Ok(true);
-    }
-    Ok(false)
+fn has_sequence_transcript(s: &Session) -> bool {
+    !crate::transcript::sequence_words(s).is_empty()
 }
 
 fn filler_list(p: &Value) -> Vec<String> {
@@ -117,7 +348,14 @@ fn filler_list(p: &Value) -> Vec<String> {
 }
 
 fn quick_cut(s: &mut Session, p: &Value) -> Result<Value> {
-    let transcribed = ensure_transcript(s)?;
+    if !has_sequence_transcript(s) || bool_p(p, "retranscribe").unwrap_or(false) {
+        // transcribe first (in the background); the cut follows when the transcript arrives
+        return start_transcribe(s, p, Then::QuickCut(p.clone()));
+    }
+    quick_cut_now(s, p)
+}
+
+fn quick_cut_now(s: &mut Session, p: &Value) -> Result<Value> {
     let fillers = filler_list(p);
     let min = f64_p(p, "minSeconds").filter(|x| x.is_finite()).unwrap_or(0.6).clamp(0.2, 10.0);
     let keep = f64_p(p, "keepSeconds").filter(|x| x.is_finite()).unwrap_or(0.12).clamp(0.0, 2.0);
@@ -125,12 +363,14 @@ fn quick_cut(s: &mut Session, p: &Value) -> Result<Value> {
     let pz = s.execute("transcript.removePauses", json!({"minSeconds": min, "keepSeconds": keep}))?;
     let secs = |v: &Value| v.get("seconds").and_then(Value::as_f64).unwrap_or(0.0);
     let num = |v: &Value| v.get("removed").and_then(Value::as_u64).unwrap_or(0);
-    Ok(json!({
-        "transcribed": transcribed,
-        "fillers": num(&f),
-        "pauses": num(&pz),
-        "seconds": secs(&f) + secs(&pz),
-    }))
+    Ok(json!({"fillers": num(&f), "pauses": num(&pz), "seconds": secs(&f) + secs(&pz)}))
+}
+
+fn quick_cut_message(r: &Value) -> String {
+    let n = |k: &str| r.get(k).and_then(Value::as_u64).unwrap_or(0);
+    // Hungarian decimal comma
+    let secs = format!("{:.1}", r.get("seconds").and_then(Value::as_f64).unwrap_or(0.0)).replace('.', ",");
+    format!("Durva vágás kész: {} töltelékszó és {} szünet kivágva ({secs} mp)", n("fillers"), n("pauses"))
 }
 
 /// Sequence words as the engine's `--segment-words` input (milliseconds of sequence time).
@@ -141,9 +381,16 @@ fn words_json(s: &Session) -> Value {
 }
 
 fn create_captions(s: &mut Session, p: &Value) -> Result<Value> {
+    engine_exe(s, "like.createCaptions")?;
+    if !has_sequence_transcript(s) {
+        return start_transcribe(s, p, Then::Captions(p.clone()));
+    }
+    create_captions_now(s, p)
+}
+
+fn create_captions_now(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "like.createCaptions";
     let exe = engine_exe(s, cmd)?;
-    ensure_transcript(s)?;
     let words = words_json(s);
     if words["words"].as_array().is_none_or(|a| a.is_empty()) {
         return Err(bad(cmd, "the sequence has no transcript words"));
@@ -188,40 +435,41 @@ fn correct_captions(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "like.correctCaptions";
     let exe = engine_exe(s, cmd)?;
     let track = work_track(s, p).ok_or_else(|| bad(cmd, "no caption track"))?;
-    let caps: Vec<(ClipId, String)> =
+    let snapshot: Vec<(ClipId, String)> =
         s.active_sequence().and_then(|q| q.caption_track(track)).map(|t| t.captions.iter().map(|c| (c.id, c.text.clone())).collect()).unwrap_or_default();
-    if caps.is_empty() {
+    if snapshot.is_empty() {
         return Err(bad(cmd, "the caption track is empty"));
     }
-    let input_json = json!({"captions": caps.iter().map(|(id, text)| json!({"id": id.0, "text": text.replace('\n', " ")})).collect::<Vec<_>>()});
-    let work = WorkDir::new().map_err(|e| engine_err(format!("no temporary folder: {e}")))?;
-    let input = work.path.join("captions.json");
-    let out = work.path.join("corrected.json");
-    let bytes = serde_json::to_vec(&input_json).map_err(|e| engine_err(e.to_string()))?;
-    std::fs::write(&input, bytes).map_err(|e| engine_err(format!("could not write {}: {e}", input.display())))?;
-    let args: Vec<std::ffi::OsString> = vec!["--correct-captions".into(), input.into_os_string(), "--out".into(), out.clone().into_os_string()];
-    run_engine(&exe, &args).map_err(engine_err)?;
-    let raw = std::fs::read_to_string(&out).map_err(|e| engine_err(format!("the engine wrote no result ({e})")))?;
-    let v: Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).map_err(|e| engine_err(format!("the engine's result is not valid: {e}")))?;
-    let fixed = v.get("captions").and_then(Value::as_array).cloned().unwrap_or_default();
-    let mut changed = 0usize;
-    for f in fixed {
-        let (Some(id), Some(text)) = (f.get("id").and_then(Value::as_u64), f.get("text").and_then(Value::as_str)) else {
-            continue;
-        };
-        let Some((_, old)) = caps.iter().find(|(c, _)| c.0 == id) else {
-            continue;
-        };
-        if old.replace('\n', " ").split_whitespace().eq(text.split_whitespace()) {
-            continue;
-        }
-        let lines = old.lines().count().max(1);
-        let new_text = wrap(text, lines);
-        s.execute("captions.setText", json!({"caption": id, "text": new_text}))?;
-        changed += 1;
-    }
-    let warnings = v.get("warnings").cloned().unwrap_or(json!([]));
-    Ok(json!({"changed": changed, "captions": caps.len(), "warnings": warnings}))
+    let input_json = json!({"captions": snapshot.iter().map(|(id, text)| json!({"id": id.0, "text": text.replace('\n', " ")})).collect::<Vec<_>>()});
+    let n = snapshot.len();
+    let wait = bool_p(p, "wait").unwrap_or(false);
+    let job = start_job(
+        s,
+        format!("Felirat AI-javítása ({n} felirat)"),
+        1,
+        wait,
+        Box::new(move |prog: &filmcraft_export::Progress| {
+            *lock(&prog.status) = format!("{n} felirat javítása…");
+            let work = WorkDir::new().map_err(|e| format!("no temporary folder: {e}"))?;
+            let input = work.path.join("captions.json");
+            let out = work.path.join("corrected.json");
+            let bytes = serde_json::to_vec(&input_json).map_err(|e| e.to_string())?;
+            std::fs::write(&input, bytes).map_err(|e| format!("could not write {}: {e}", input.display()))?;
+            let args: Vec<std::ffi::OsString> = vec!["--correct-captions".into(), input.into_os_string(), "--out".into(), out.clone().into_os_string()];
+            run_engine_cancellable(&exe, &args, Some(&prog.cancel))?;
+            let raw = std::fs::read_to_string(&out).map_err(|e| format!("the engine wrote no result ({e})"))?;
+            let v: Value = serde_json::from_str(raw.trim_start_matches('\u{feff}')).map_err(|e| format!("the engine's result is not valid: {e}"))?;
+            let fixed: Vec<(u64, String)> = v
+                .get("captions")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(|f| Some((f.get("id")?.as_u64()?, f.get("text")?.as_str()?.to_string()))).collect())
+                .unwrap_or_default();
+            let warnings: Vec<String> =
+                v.get("warnings").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
+            Ok(Output::Corrections { snapshot, fixed, warnings })
+        }),
+    )?;
+    Ok(json!({"job": job, "captions": n, "background": !wait}))
 }
 
 /// Break `text` into at most `lines` lines (1 or 2), near the middle, never leaving an article or a
@@ -394,6 +642,12 @@ mod tests {
         assert_eq!(filler_list(&json!({})).len(), HU_FILLERS.len());
         assert_eq!(filler_list(&json!({"fillers": "extended"})).len(), HU_FILLERS.len() + HU_FILLERS_EXTENDED.len());
         assert_eq!(filler_list(&json!({"fillers": ["x"]})), vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn quick_cut_message_reads_well() {
+        let m = quick_cut_message(&json!({"fillers": 3, "pauses": 12, "seconds": 41.26}));
+        assert_eq!(m, "Durva vágás kész: 3 töltelékszó és 12 szünet kivágva (41,3 mp)");
     }
 
     #[test]

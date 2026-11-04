@@ -25,8 +25,8 @@ pub mod graphic_templates;
 pub mod graphics;
 pub mod interchange;
 pub mod keyboard;
-pub mod like_tools; // LIKE: Sequence ▸ LIKE commands (docs/LIKE-VALTOZASNAPLO.md)
 mod keyframe_move;
+pub mod like_tools; // LIKE: Sequence ▸ LIKE commands (docs/LIKE-VALTOZASNAPLO.md)
 mod marker_edit;
 mod marker_export;
 pub mod masks;
@@ -704,6 +704,7 @@ impl Session {
         proxies::poll(self);
         masks::poll(self);
         scene_detect::poll(self);
+        like_tools::poll(self); // LIKE: background engine jobs (docs/LIKE-VALTOZASNAPLO.md)
         export_tools::pump_queue(self, false);
         panels::log_jobs(self);
         let Some(p) = self.persistence.as_mut() else { return };

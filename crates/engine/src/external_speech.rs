@@ -33,7 +33,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use serde::Deserialize;
 
@@ -103,46 +103,82 @@ impl Transcriber for ExternalTranscriber {
     }
 
     fn transcribe(&self, audio: &[f32], _opts: &Options, progress: ProgressFn) -> Result<Transcript, SpeechError> {
-        if audio.len() > MAX_SAMPLES {
-            return Err(SpeechError::Io("the audio is longer than 10 hours; split it before transcribing".into()));
-        }
-        if !progress(0.05, "Preparing audio for the speech engine") {
+        if !progress(0.05, "Transcribing with the external speech engine") {
             return Err(SpeechError::Cancelled);
         }
-        let work = WorkDir::new().map_err(|e| SpeechError::Io(format!("no temporary folder for the speech engine: {e}")))?;
-        let wav = work.path.join("audio.wav");
-        let json = work.path.join("result.json");
-        std::fs::write(&wav, wav_bytes(audio)).map_err(|e| SpeechError::Io(format!("could not write {}: {e}", wav.display())))?;
-        if !progress(0.1, "Transcribing with the external speech engine") {
-            return Err(SpeechError::Cancelled);
-        }
-        let args: Vec<std::ffi::OsString> = vec!["--subtitle-file".into(), wav.clone().into_os_string(), "--out".into(), json.clone().into_os_string()];
-        run_engine(&self.exe, &args).map_err(SpeechError::Io)?;
-        if !progress(0.95, "Reading the transcript") {
-            return Err(SpeechError::Cancelled);
-        }
-        let raw = std::fs::read_to_string(&json).map_err(|e| SpeechError::Io(format!("the speech engine wrote no result ({e})")))?;
-        let mut t = parse_result(&raw, audio.len()).map_err(SpeechError::Io)?;
+        let mut t = transcribe_audio(&self.exe, audio, None).map_err(SpeechError::Io)?;
         t.source = self.id();
         Ok(t)
     }
 }
 
+/// Transcribe mono 16 kHz `audio` with the engine at `exe`. `cancel` set while it runs stops the
+/// engine and returns `Err("stopped")`.
+pub fn transcribe_audio(exe: &Path, audio: &[f32], cancel: Option<&AtomicBool>) -> std::result::Result<Transcript, String> {
+    if audio.len() > MAX_SAMPLES {
+        return Err("the audio is longer than 10 hours; split it before transcribing".into());
+    }
+    let work = WorkDir::new().map_err(|e| format!("no temporary folder for the speech engine: {e}"))?;
+    let wav = work.path.join("audio.wav");
+    let json = work.path.join("result.json");
+    std::fs::write(&wav, wav_bytes(audio)).map_err(|e| format!("could not write {}: {e}", wav.display()))?;
+    let args: Vec<std::ffi::OsString> = vec!["--subtitle-file".into(), wav.into_os_string(), "--out".into(), json.clone().into_os_string()];
+    run_engine_cancellable(exe, &args, cancel)?;
+    let raw = std::fs::read_to_string(&json).map_err(|e| format!("the speech engine wrote no result ({e})"))?;
+    let mut t = parse_result(&raw, audio.len())?;
+    t.source = format!("external:{}", exe.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| "external".into()));
+    Ok(t)
+}
+
 /// Run the engine with `args`, wait, and turn a failure into a readable message.
 pub fn run_engine(exe: &Path, args: &[std::ffi::OsString]) -> std::result::Result<String, String> {
+    run_engine_cancellable(exe, args, None)
+}
+
+/// [`run_engine`] that also stops (kills) the engine when `cancel` is set; then it returns
+/// `Err("stopped")`.
+pub fn run_engine_cancellable(exe: &Path, args: &[std::ffi::OsString], cancel: Option<&AtomicBool>) -> std::result::Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
     let mut cmd = Command::new(exe);
-    cmd.args(args);
+    cmd.args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let out = cmd.output().map_err(|e| format!("could not start the speech engine {}: {e}", exe.display()))?;
-    let stdout = String::from_utf8_lossy(&out.stdout).into_owned();
-    if out.status.success() {
+    let mut child = cmd.spawn().map_err(|e| format!("could not start the speech engine {}: {e}", exe.display()))?;
+    // Drain both pipes on their own threads: the engine logs a lot to stderr, and a full pipe
+    // would block it forever.
+    let drain = |pipe: Option<Box<dyn Read + Send>>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    };
+    let out_t = drain(child.stdout.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let err_t = drain(child.stderr.take().map(|p| Box::new(p) as Box<dyn Read + Send>));
+    let status = loop {
+        if cancel.is_some_and(|c| c.load(Ordering::Relaxed)) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err("stopped".into());
+        }
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => return Err(format!("lost the speech engine: {e}")),
+        }
+    };
+    let stdout = String::from_utf8_lossy(&out_t.join().unwrap_or_default()).into_owned();
+    let stderr_bytes = err_t.join().unwrap_or_default();
+    if status.success() {
         return Ok(stdout);
     }
-    let stderr = String::from_utf8_lossy(&out.stderr);
+    let stderr = String::from_utf8_lossy(&stderr_bytes);
     // The engine's own error lines (`hiba: …` / `error: …`) are the useful part; logs are noise.
     let msg: Vec<&str> = stderr
         .lines()
@@ -151,7 +187,7 @@ pub fn run_engine(exe: &Path, args: &[std::ffi::OsString]) -> std::result::Resul
         .map(|l| l.trim_start_matches("hiba:").trim_start_matches("error:").trim())
         .collect();
     let msg = if msg.is_empty() { stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string() } else { msg.join("; ") };
-    let code = out.status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
+    let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
     Err(if msg.is_empty() { format!("the speech engine failed (exit code {code})") } else { format!("the speech engine failed (exit code {code}): {msg}") })
 }
 
@@ -310,6 +346,30 @@ mod tests {
     fn ms_tick_round_trip() {
         assert_eq!(tick_to_ms(ms_to_tick(1234)), 1234);
         assert_eq!(ms_to_tick(-5), Tick(0));
+    }
+
+    #[test]
+    fn missing_engine_is_a_readable_error() {
+        let e = run_engine(Path::new("this-engine-does-not-exist.exe"), &[]).unwrap_err();
+        assert!(e.contains("could not start the speech engine"), "{e}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn cancel_stops_a_running_engine() {
+        let cancel = AtomicBool::new(false);
+        let started = std::time::Instant::now();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+                cancel.store(true, Ordering::Relaxed);
+            });
+            // a command that would run for ~20 s
+            let args: Vec<std::ffi::OsString> = vec!["/c".into(), "ping -n 20 127.0.0.1".into()];
+            let r = run_engine_cancellable(Path::new("cmd"), &args, Some(&cancel));
+            assert_eq!(r.unwrap_err(), "stopped");
+        });
+        assert!(started.elapsed() < std::time::Duration::from_secs(10));
     }
 
     #[test]
