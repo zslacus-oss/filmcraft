@@ -74,6 +74,11 @@ fn has_captions(s: &Session) -> std::result::Result<(), String> {
     if s.active_sequence().is_some_and(|q| q.caption_tracks.iter().any(|t| !t.captions.is_empty())) { Ok(()) } else { Err("there are no captions".into()) }
 }
 
+fn has_caption_track(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if s.active_sequence().is_some_and(|q| !q.caption_tracks.is_empty()) { Ok(()) } else { Err("there is no caption track".into()) }
+}
+
 fn engine_installed(_: &Session) -> std::result::Result<(), String> {
     if crate::external_speech::detect().is_some() { Ok(()) } else { Err("the LIKE speech engine (LIKE Diktálás) is not installed".into()) }
 }
@@ -252,7 +257,10 @@ fn apply(s: &mut Session, out: Output) -> Result<Value> {
                 if old.replace('\n', " ").split_whitespace().eq(text.split_whitespace()) {
                     continue;
                 }
-                s.execute("captions.setText", json!({"caption": id, "text": wrap(&text, old.lines().count().max(1))}))?;
+                // the model may lengthen a block: keep its line count, and take a third line
+                // rather than break the 42-character limit
+                let lines = old.lines().count().clamp(1, 2);
+                s.execute("captions.setText", json!({"caption": id, "text": wrap_to(&text, MAX_LINE_CHARS, lines, 3)}))?;
                 changed += 1;
             }
             s.toast(format!("AI-javítás kész: {changed} felirat változott"));
@@ -377,42 +385,157 @@ fn clean_audio(s: &mut Session, p: &Value) -> Result<Value> {
     Ok(json!({"clips": clips.len(), "autoMatch": matched}))
 }
 
-/// A platform export: (file suffix, built-in preset, overridden frame size).
-fn platform_export(platform: &str) -> Option<(&'static str, &'static str, Option<(u32, u32)>)> {
-    Some(match platform {
-        "youtube" => ("YouTube 16x9", "YouTube 1080p Full HD", None),
-        "vertical" => ("TikTok-Reels-Shorts 9x16", "TikTok 1080×1920", None),
-        "square" => ("LinkedIn 1x1", "Social Vertical 1080×1920", Some((1080, 1080))),
-        "portrait" => ("LinkedIn-Instagram 4x5", "Social Vertical 1080×1920", Some((1080, 1350))),
+/// The LIKE caption looks, as `captions.setStyle` params (sizes are for a 1080-line frame
+/// and scale with the frame height).
+fn caption_look(look: &str) -> Option<Value> {
+    Some(match look {
+        // Landscape (YouTube): the readable default, bottom, on a translucent box.
+        "classic" => json!({"reset": true, "font": "Inter", "fontStyle": "SemiBold", "size": 54, "color": "#ffffff",
+                            "background": true, "backgroundColor": "#000000bf", "align": "center", "anchor": "bottom",
+                            "margin": 0.08, "outline": 0}),
+        // Vertical (TikTok/Reels/Shorts): big, bold, outlined, no box, and lifted above the bottom
+        // ~25% the apps cover with their buttons and the post text.
+        "social" => json!({"reset": true, "font": "Inter", "fontStyle": "Bold", "size": 46, "color": "#ffffff",
+                           "background": false, "align": "center", "anchor": "bottom", "margin": 0.28,
+                           "outline": 5, "outlineColor": "#000000", "lineSpacing": 1.15}),
         _ => return None,
     })
 }
 
+/// Apply a LIKE caption look to one track (`track`) or, by default, to every caption track.
+fn caption_style(s: &mut Session, p: &Value, look: &str) -> Result<Value> {
+    let cmd = "like.captionStyle";
+    let mut style = caption_look(look).ok_or_else(|| bad(cmd, format!("unknown look `{look}`")))?;
+    let tracks: Vec<filmcraft_project::TrackId> = if p.get("track").is_some() {
+        work_track(s, p).into_iter().collect()
+    } else {
+        s.active_sequence().map(|q| q.caption_tracks.iter().map(|t| t.id).collect()).unwrap_or_default()
+    };
+    if tracks.is_empty() {
+        return Err(bad(cmd, "the sequence has no caption track"));
+    }
+    for t in &tracks {
+        if let Some(o) = style.as_object_mut() {
+            o.insert("track".into(), json!(t));
+        }
+        s.execute("captions.setStyle", style.clone())?;
+    }
+    let name = if look == "social" { "közösségi (álló videó)" } else { "klasszikus (fekvő videó)" };
+    s.toast(format!("Feliratstílus: {name}"));
+    Ok(json!({"look": look, "tracks": tracks.len()}))
+}
+
+/// A platform export: (file suffix, built-in preset, output frame size).
+fn platform_export(platform: &str) -> Option<(&'static str, &'static str, (u32, u32))> {
+    Some(match platform {
+        "youtube" => ("YouTube 16x9", "YouTube 1080p Full HD", (1920, 1080)),
+        "vertical" => ("TikTok-Reels-Shorts 9x16", "TikTok 1080×1920", (1080, 1920)),
+        "square" => ("LinkedIn 1x1", "Social Vertical 1080×1920", (1080, 1080)),
+        "portrait" => ("LinkedIn-Instagram 4x5", "Social Vertical 1080×1920", (1080, 1350)),
+        _ => return None,
+    })
+}
+
+/// Characters per caption line on a reframed (non-landscape) export: short lines read fast on a
+/// phone and leave the picture free.
+const REFRAME_LINE_CHARS: usize = 26;
+/// Average glyph advance of the bold caption face, as a fraction of the font size (a little wide,
+/// so lines measured by it fit).
+const GLYPH_ADVANCE: f32 = 0.6;
+
+/// Whether a caption style is one of the LIKE looks (so a reframed export may resize it), not
+/// the user's own design.
+fn is_like_look(st: &filmcraft_project::CaptionStyle) -> bool {
+    *st == filmcraft_project::CaptionStyle::default() || (st.font_style == "Bold" && !st.background && st.outline > 0.0)
+}
+
+/// The social look sized for a `w`×`h` frame: `REFRAME_LINE_CHARS` fill 90% of the width.
+/// (`size` is in pixels of a 1080-line frame, scaled by the frame height when burned in.)
+fn reframed_style(w: u32, h: u32, vertical: bool) -> filmcraft_project::CaptionStyle {
+    let px = w as f32 * 0.9 / (REFRAME_LINE_CHARS as f32 * GLYPH_ADVANCE);
+    filmcraft_project::CaptionStyle {
+        font: "Inter".into(),
+        font_style: "Bold".into(),
+        size: (px * 1080.0 / h.max(1) as f32).clamp(8.0, 120.0),
+        color: [255, 255, 255, 255],
+        background: false,
+        outline: 5.0,
+        outline_color: [0, 0, 0, 255],
+        line_spacing: 1.15,
+        // 9:16 apps cover the bottom quarter with buttons and the post text
+        margin: if vertical { 0.28 } else { 0.1 },
+        ..Default::default()
+    }
+}
+
 fn export_for(s: &mut Session, platform: &str, p: &Value) -> Result<Value> {
     let cmd = "like.export";
-    let (suffix, preset, size) = platform_export(platform).ok_or_else(|| bad(cmd, format!("unknown platform `{platform}`")))?;
+    let (suffix, preset, (w, h)) = platform_export(platform).ok_or_else(|| bad(cmd, format!("unknown platform `{platform}`")))?;
     let has_captions = s.active_sequence().is_some_and(|q| q.caption_tracks.iter().any(|t| t.enabled && !t.captions.is_empty()));
+    let burn = bool_p(p, "burnCaptions").unwrap_or(has_captions);
     let path = output_dir(s).join(format!("{} – {suffix}.mp4", sequence_file_stem(s)));
     let mut q = json!({
         "path": path.to_string_lossy(),
         "preset": preset,
-        "burnCaptions": bool_p(p, "burnCaptions").unwrap_or(has_captions),
+        "width": w,
+        "height": h,
+        "burnCaptions": burn,
         "loudnessLufs": -14.0,
         "wait": bool_p(p, "wait").unwrap_or(false),
     });
-    if let Some((w, h)) = size {
-        q["width"] = json!(w);
-        q["height"] = json!(h);
-    }
     // optional range (In/Out, work area, or seconds) passed straight to file.exportMedia
     for key in ["range", "startSeconds", "endSeconds"] {
         if let Some(v) = p.get(key) {
             q[key] = v.clone();
         }
     }
-    let r = s.execute("file.exportMedia", q)?;
+    let (sw, sh) = s.active_sequence().map(|q| (q.settings.width, q.settings.height)).unwrap_or((w, h));
+    let same_shape = u64::from(sw) * u64::from(h) == u64::from(sh) * u64::from(w);
+    let r = if same_shape { s.execute("file.exportMedia", q)? } else { reframed_export(s, q, w, h, burn)? };
     s.toast(format!("Exportálás elindult: {}", path.display()));
     Ok(json!({"path": path.display().to_string(), "export": r}))
+}
+
+/// Export the active sequence at another shape (9:16, 1:1, 4:5) as if it had been made for it.
+///
+/// The export renders the sequence at its own shape, burns the captions in, and only then crops
+/// to the output: 16:9 captions lost both ends on a 9:16 export. So for the export only, the
+/// sequence takes the output size, its clips fill the frame, and LIKE-styled captions get the
+/// social look sized for the frame with short lines. The export job keeps its own copy of the
+/// project; the user's project, undo history and selection are put back untouched.
+fn reframed_export(s: &mut Session, q: Value, w: u32, h: u32, burn: bool) -> Result<Value> {
+    let saved = (s.project.clone(), s.history.clone(), s.state.clone(), s.revision == s.saved_revision);
+    let r = (|| -> Result<Value> {
+        s.execute("sequence.settings", json!({"width": w, "height": h}))?;
+        let clips: Vec<u64> = s.active_sequence().map(|q| q.video_tracks.iter().flat_map(|t| t.items.iter()).map(|it| it.id.0).collect()).unwrap_or_default();
+        if !clips.is_empty() {
+            // graphics and other sourceless clips are skipped by fillFrame itself
+            let _ = s.execute("clip.fillFrame", json!({"clips": clips}));
+        }
+        if burn {
+            let look = reframed_style(w, h, h > w);
+            s.edit("LIKE reframe", |pr, st| {
+                let seq = st.active_sequence.ok_or(EngineError::NoSequence)?;
+                let q = pr.sequence_mut(seq).ok_or(EngineError::NoSequence)?;
+                for t in q.caption_tracks.iter_mut().filter(|t| is_like_look(&t.style)) {
+                    t.style = look.clone();
+                    for c in t.captions.iter_mut() {
+                        c.text = wrap_to(&c.text, REFRAME_LINE_CHARS, 1, MAX_WRAP_LINES);
+                    }
+                }
+                Ok(())
+            })?;
+        }
+        s.execute("file.exportMedia", q)
+    })();
+    s.project = saved.0;
+    s.history = saved.1;
+    s.state = saved.2;
+    s.bump();
+    if saved.3 {
+        s.saved_revision = s.revision;
+    }
+    r
 }
 
 fn export_all(s: &mut Session, p: &Value) -> Result<Value> {
@@ -661,6 +784,80 @@ pub fn wrap(text: &str, lines: usize) -> String {
         None => words.join(" "),
     }
 }
+
+/// Break `text` into the fewest lines (at least `min_lines`, at most `max_lines`) of at most
+/// `max_chars` characters, as even as possible, never ending a line on an article or a
+/// conjunction. When `max_lines` lines cannot fit, the most even `max_lines` split wins.
+pub fn wrap_to(text: &str, max_chars: usize, min_lines: usize, max_lines: usize) -> String {
+    let words: Vec<&str> = text.split_whitespace().collect();
+    let k = words.len();
+    if k == 0 {
+        return String::new();
+    }
+    let lens: Vec<usize> = words.iter().map(|w| w.chars().count()).collect();
+    // width of words[i..j] on one line
+    let width = |i: usize, j: usize| -> usize { lens.get(i..j).map(|s| s.iter().sum::<usize>() + s.len().saturating_sub(1)).unwrap_or(0) };
+    let ends_ok = |j: usize| -> bool { j >= k || words.get(j - 1).is_none_or(|w| !NO_LINE_END.contains(&norm(w).as_str())) };
+    let max_lines = max_lines.clamp(1, k.min(MAX_WRAP_LINES));
+    let min_lines = min_lines.clamp(1, max_lines);
+    // best[n][j]: (longest line, sum of squares, previous break) for words[..j] in n lines
+    let mut best_split: Option<(usize, Vec<usize>)> = None;
+    for n in min_lines..=max_lines {
+        let inf = (usize::MAX, usize::MAX, 0usize);
+        let mut dp = vec![vec![inf; k + 1]; n + 1];
+        if let Some(row) = dp.get_mut(0)
+            && let Some(cell) = row.get_mut(0)
+        {
+            *cell = (0, 0, 0);
+        }
+        for line in 1..=n {
+            for j in 1..=k {
+                if !ends_ok(j) && j < k {
+                    continue;
+                }
+                for i in (line - 1)..j {
+                    let Some(&(m, sq, _)) = dp.get(line - 1).and_then(|r| r.get(i)) else { continue };
+                    if m == usize::MAX {
+                        continue;
+                    }
+                    let w = width(i, j);
+                    let cand = (m.max(w), sq.saturating_add(w.saturating_mul(w)), i);
+                    if let Some(cell) = dp.get_mut(line).and_then(|r| r.get_mut(j))
+                        && (cand.0, cand.1) < (cell.0, cell.1)
+                    {
+                        *cell = cand;
+                    }
+                }
+            }
+        }
+        let Some(&(longest, _, _)) = dp.get(n).and_then(|r| r.get(k)) else { continue };
+        if longest == usize::MAX {
+            continue;
+        }
+        let mut breaks = vec![k];
+        let mut j = k;
+        for line in (1..=n).rev() {
+            let Some(&(_, _, i)) = dp.get(line).and_then(|r| r.get(j)) else { break };
+            breaks.push(i);
+            j = i;
+        }
+        breaks.reverse();
+        let fits = longest <= max_chars;
+        if fits || n == max_lines || best_split.is_none() {
+            best_split = Some((longest, breaks));
+        }
+        if fits {
+            break;
+        }
+    }
+    let Some((_, breaks)) = best_split else { return words.join(" ") };
+    breaks.windows(2).filter_map(|w| words.get(w[0]..w[1]).map(|s| s.join(" "))).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n")
+}
+
+/// Most lines [`wrap_to`] lays a caption out on.
+const MAX_WRAP_LINES: usize = 4;
+/// The LIKE caption line limit (characters).
+const MAX_LINE_CHARS: usize = 42;
 
 /// The caption to act on: the first selected one, else the one under the playhead.
 fn current_caption(s: &Session, p: &Value) -> Option<ClipId> {
@@ -937,6 +1134,12 @@ pub fn commands() -> Vec<CommandSpec> {
         spec("like.correctCaptions", "Felirat AI-javítása (helyesírás, ragozás)", r#"{"track":id|"C1"?}"#, has_engine_and_captions, correct_captions),
         spec("like.moveWordNext", "Utolsó szó át a következő feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, true)),
         spec("like.moveWordPrev", "Első szó vissza az előző feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, false)),
+        spec("like.captionStyle.social", "Feliratstílus: közösségi (álló videó)", r#"{"track":id|"C1"?}"#, has_caption_track, |s, p| {
+            caption_style(s, p, "social")
+        }),
+        spec("like.captionStyle.classic", "Feliratstílus: klasszikus (fekvő videó)", r#"{"track":id|"C1"?}"#, has_caption_track, |s, p| {
+            caption_style(s, p, "classic")
+        }),
         spec("like.markRetakes", "Ismételt mondatok megjelölése", "{}", has_transcript, mark_retakes),
         spec("like.cutMarkedRetakes", "Megjelölt ismétlések kivágása", "{}", has_retake_markers, cut_marked_retakes),
         spec("like.cleanAudio", "Hangtisztítás (zaj, zúgás, hangosság)", r#"{"clips":[id]?}"#, has_audio_clips, clean_audio),
@@ -1048,9 +1251,9 @@ mod tests {
 
     #[test]
     fn platform_exports_cover_the_four_formats() {
-        assert_eq!(platform_export("youtube").map(|p| p.2), Some(None));
-        assert_eq!(platform_export("square").map(|p| p.2), Some(Some((1080, 1080))));
-        assert_eq!(platform_export("portrait").map(|p| p.2), Some(Some((1080, 1350))));
+        assert_eq!(platform_export("youtube").map(|p| p.2), Some((1920, 1080)));
+        assert_eq!(platform_export("square").map(|p| p.2), Some((1080, 1080)));
+        assert_eq!(platform_export("portrait").map(|p| p.2), Some((1080, 1350)));
         assert!(platform_export("vertical").is_some());
         assert!(platform_export("myspace").is_none());
     }
@@ -1076,6 +1279,93 @@ mod tests {
         assert!(path.starts_with(&dir), "{e}");
         assert!(path.to_string_lossy().ends_with("LinkedIn 1x1.mp4"), "{e}");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn wrap_to_keeps_the_limit_and_the_article_rule() {
+        // the live AI correction: 86 characters, a 43-character line in two
+        let t = "adminisztrációban. Például a LIKE AI automatikusan igazítja az ügyfelek adatait.";
+        let w = wrap_to(t, 42, 2, 3);
+        assert!(w.lines().all(|l| l.chars().count() <= 42), "{w}");
+        assert!(w.lines().count() <= 3, "{w}");
+        // no article or conjunction at a line end
+        for l in w.lines().take(w.lines().count() - 1) {
+            let last = norm(l.split_whitespace().last().unwrap());
+            assert!(!NO_LINE_END.contains(&last.as_str()), "{w}");
+        }
+        // a short text keeps its line count
+        assert_eq!(wrap_to("Ma arról beszélek", 42, 1, 3), "Ma arról beszélek");
+        assert_eq!(wrap_to("Ma arról beszélek, hogy segít", 42, 2, 3).lines().count(), 2);
+        // phone lines: 26 characters
+        let v = wrap_to(t, 26, 1, 4);
+        assert!(v.lines().all(|l| l.chars().count() <= 26), "{v}");
+        // nothing lost, nothing added
+        assert!(v.split_whitespace().eq(t.split_whitespace()));
+        assert_eq!(wrap_to("", 26, 1, 4), "");
+        // one overlong word cannot be split: it stays whole
+        assert_eq!(wrap_to("Megszentségteleníthetetlenségeskedéseitekért", 26, 1, 4), "Megszentségteleníthetetlenségeskedéseitekért");
+    }
+
+    #[test]
+    fn reframed_exports_leave_the_project_untouched() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        s.execute("captions.add", json!({"text": "Ez egy hosszabb felirat, amelynek el kell férnie álló videón is"})).unwrap();
+        let dir = std::env::temp_dir().join(format!("like-reframe-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        s.path = Some(dir.join("teszt.fcproj").to_string_lossy().into_owned());
+        s.saved_revision = s.revision;
+        let before = (s.project.clone(), s.history.undo.len(), s.active_sequence().map(|q| (q.settings.width, q.settings.height)));
+        let e = s.execute("like.export.vertical", json!({"wait": true, "range": "custom", "startSeconds": 0, "endSeconds": 0.4})).unwrap();
+        assert!(std::path::Path::new(e["path"].as_str().unwrap()).is_file(), "{e}");
+        // same project content, same undo history, same frame size, still saved
+        assert!(Arc::ptr_eq(&before.0, &s.project), "the project was put back");
+        assert_eq!(s.history.undo.len(), before.1);
+        assert_eq!(s.active_sequence().map(|q| (q.settings.width, q.settings.height)), before.2);
+        assert_eq!(s.revision, s.saved_revision, "an export does not make the project dirty");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reframed_caption_size_fits_the_frame() {
+        for (w, h) in [(1080, 1920), (1080, 1080), (1080, 1350)] {
+            let st = reframed_style(w, h, h > w);
+            let px = st.size * h as f32 / 1080.0;
+            let line = REFRAME_LINE_CHARS as f32 * GLYPH_ADVANCE * px;
+            assert!(line <= w as f32 * 0.9 + 0.5, "{w}x{h}: {line}");
+            assert!(px >= 40.0, "{w}x{h}: readable on a phone ({px}px)");
+            assert!(is_like_look(&st));
+        }
+        assert!(is_like_look(&filmcraft_project::CaptionStyle::default()));
+        let own = filmcraft_project::CaptionStyle { color: [255, 200, 0, 255], ..Default::default() };
+        assert!(!is_like_look(&own), "a user's own design is left alone");
+    }
+
+    #[test]
+    fn caption_looks_style_every_track_and_undo_cleanly() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        assert!(s.execute("like.captionStyle.social", json!({})).is_err(), "no caption track yet");
+        s.execute("captions.add", json!({"text": "Első felirat"})).unwrap();
+        s.execute("captions.newTrack", json!({})).unwrap();
+        let r = s.execute("like.captionStyle.social", json!({})).unwrap();
+        assert_eq!(r["tracks"], 2, "{r}");
+        for t in &s.active_sequence().unwrap().caption_tracks {
+            assert!(!t.style.background);
+            assert_eq!(t.style.font_style, "Bold");
+            assert!(t.style.margin > 0.2, "above the app buttons: {}", t.style.margin);
+            assert!(t.style.outline > 0.0);
+        }
+        // classic is the stock look again
+        s.execute("like.captionStyle.classic", json!({})).unwrap();
+        let st = &s.active_sequence().unwrap().caption_tracks[0].style;
+        assert_eq!(*st, filmcraft_project::CaptionStyle { font_style: "SemiBold".into(), ..Default::default() });
+        // one track only, by id
+        let second = s.active_sequence().unwrap().caption_tracks[1].id;
+        s.execute("like.captionStyle.social", json!({"track": second})).unwrap();
+        let q = s.active_sequence().unwrap();
+        assert!(q.caption_tracks[0].style.background && !q.caption_tracks[1].style.background);
+        assert!(caption_look("neon").is_none());
     }
 
     #[test]

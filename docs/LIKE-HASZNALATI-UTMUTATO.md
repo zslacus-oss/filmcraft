@@ -5,9 +5,10 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 ## Mi kell hozzá
 
 1. **Like FilmCraft** (ez a program).
-2. **LIKE Diktálás 2.4.0 vagy újabb** telepítve (ez a magyar beszédmotor). A FilmCraft magától
+2. **LIKE Diktálás 2.4.3 vagy újabb** telepítve (ez a magyar beszédmotor). A FilmCraft magától
    megtalálja a `%LOCALAPPDATA%\LIKE Diktálás\` mappában.
-3. A LIKE Diktálásban beállítva: a beszédmodell (Whisper Large v3 Turbo), a személyes szótár, és –
+3. A LIKE Diktálásban beállítva: a beszédmodell (például NVIDIA Nemotron Streaming vagy Whisper
+   Large v3 Turbo), a személyes szótár (ide kerüljenek a márka- és terméknevek, pl. „LIKE CRM"), és –
    az AI-javításhoz – egy AI-szolgáltató kulccsal. Szóidőhöz ajánlott egy szóidős modell
    (Parakeet / Nemotron) letöltése is; enélkül a szóidő becsült lesz.
 
@@ -23,10 +24,10 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 | 6. Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
 | 7. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
 | 8. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
-| 9. Kézi simítás | Ablak ▸ Munkaterületek ▸ Feliratok és grafika | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
+| 9. Kézi simítás | Ablak ▸ Munkaterületek ▸ **Felirat** (balra a feliratszerkesztő, középen a kép, alul az idővonal) | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
 | 10. **Hangtisztítás** | Szekvencia ▸ LIKE ▸ Hangtisztítás | zajszűrés, dübörgés- és zúgásszűrés (50 Hz), hangosság-kiegyenlítés minden hangklipen |
-| 11. Stílus | Szöveg panel ▸ Feliratok, stíluscsík | betűtípus, méret, szín, körvonal, háttérdoboz, pozíció |
-| 12. **Export** | Szekvencia ▸ LIKE ▸ Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram (4:5), vagy „mind a négy platformra" | ráégetett felirattal (ha van), −14 LUFS hangossággal; a fájlok a projekt mellé, vagy a Dokumentumok\Like FilmCraft mappába kerülnek |
+| 11. Stílus | Szekvencia ▸ LIKE ▸ Feliratstílus: klasszikus / közösségi, vagy kézzel: Szöveg panel ▸ Feliratok, stíluscsík | klasszikus: alul, áttetsző sávon (YouTube); közösségi: nagy, félkövér, körvonalas. Saját stílust is beállíthatsz, azt az export nem írja felül |
+| 12. **Export** | Szekvencia ▸ LIKE ▸ Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram (4:5), vagy „mind a négy platformra" | ráégetett felirattal (ha van), −14 LUFS hangossággal. Az álló, négyzetes és 4:5-ös változatnál a kép kitölti a keretet, a felirat pedig magától rövidebb sorokra tördelődik, nagyobb betűvel, a TikTok/Reels gombjai fölött; a projekted ettől nem változik. A fájlok a projekt mellé, vagy a Dokumentumok\Like FilmCraft mappába kerülnek |
 | 13. **Poszt-szöveg** | Szekvencia ▸ LIKE ▸ Poszt-szöveg és hashtagek (AI) | platformonként cím, nyitómondat, leírás, hashtagek egy fájlban; a Jegyzettömb megnyitja, onnan másold |
 | 14. Feltöltés | kézzel, a platformon | |
 
@@ -40,5 +41,7 @@ A LIKE-lépések mind visszavonhatók (Ctrl+Z).
   beállításai.
 - **A durva vágás a szavakba is belevág:** a szóidő becsült volt (nincs szóidős modell). Vond
   vissza (Ctrl+Z), töltsd le a szóidős modellt a LIKE Diktálásban, és futtasd újra.
-- A leiratozás alatt a program néhány tíz másodpercre „megállhat" – ez a jelenlegi változatban
-  várható (a háttérben futtatás a következő kör feladata).
+- **Az AI-javítás vagy a poszt-szöveg hibát ad:** az üzenet megmondja az okát (kulcs, keret,
+  jogosultság). A kulcsot a LIKE Diktálás ▸ Beállítások ▸ AI-szolgáltató alatt cseréld.
+- **Egy név rosszul jelenik meg** (pl. „lájkérm"): vedd fel a helyes alakját a LIKE Diktálás
+  személyes szótárába; a következő AI-javítás már azt használja.

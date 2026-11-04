@@ -7,6 +7,39 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-04 – #9 Feliratstílusok, Felirat munkaterület, helyes álló export
+
+**Teljes működési próba valódi videón.** A tulajdonos 88 mp-es hangfelvételéből 90 mp-es MP4 készült
+(színes háttérrel), és a teljes LIKE-lánc ablak nélkül végigfutott rajta: import, durva vágás,
+ismétlések, felirat, AI-javítás, hangtisztítás, négy export és poszt-szöveg. 90 mp → 51 mp,
+3–5 perc gépidő, ennek nagy része a négy export. Az exportok képkockáit egyenként ellenőriztük.
+
+**A próba hibái és javításuk:**
+- **Álló (9:16), négyzetes és 4:5 exportnál a felirat kilógott a képből.** A FilmCraft a 16:9-es
+  szekvencia méretében égeti rá a feliratot, és csak utána vágja ki a célképet. HOZZÁADÁS:
+  `like_tools.rs`, `reframed_export`. Csak az export idejére a szekvencia felveszi a célméretet,
+  a klipek kitöltik a keretet, a LIKE-stílusú felirat pedig a képszélességhez méretezett,
+  26 karakteres sorokra tördelt közösségi stílust kap. Az export a projekt saját másolatából
+  dolgozik, utána a projekt, a visszavonási lista és a mentett állapot változatlanul visszaáll
+  (teszt: `reframed_exports_leave_the_project_untouched`). A felhasználó saját feliratstílusát nem
+  írja felül.
+- **Az AI-javítás után egy sor 43 karakteres lett.** HOZZÁADÁS: `wrap_to` (a legkevesebb sorra,
+  legfeljebb N karakterrel, egyenletesen, névelő nélkül a sor végén). CSERE: a javított szöveg
+  `wrap_to(…, 42, eredeti sorszám, 3)`-mal tördelődik, és inkább 3 sor lesz, mint 42-nél hosszabb.
+
+**Új:**
+- `like.captionStyle.classic` / `like.captionStyle.social`: Szekvencia ▸ LIKE ▸ Feliratstílus.
+- **Felirat munkaterület** (Ablak ▸ Munkaterületek ▸ Felirat): DaVinci-szerű feliratoldal.
+  CSERE (upstream, minimális): `crates/ui-egui/src/dock.rs` `WORKSPACES` (10 → 11 elem, „Subtitles")
+  és egy elrendezés-ág. HOZZÁADÁS: `hu.tsv` „Subtitles → Felirat”;
+  `tests/it/workspaces_ui.rs` várt lista.
+
+**Tesztek:** engine 916 zöld, a munkaterület- és menütesztek zöldek.
+**Nyitott:** az ablakos `filmcraft.exe` újrafordítása a felhasználó gépén (a fejlesztői homokozó
+nem olvashatja a beégetett PNG-ikonokat). A parancssori változat lefordult és tesztelve van.
+
+---
+
 ## 2026-11-04 – #8 AI-feliratjavítás és poszt-szöveg élesben (OpenAI)
 
 Élő próba a tulajdonos felvételén, új OpenAI-kulccsal (a régit az OpenAI elutasította).
