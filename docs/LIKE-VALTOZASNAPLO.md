@@ -74,7 +74,7 @@ megoldás a FilmCraft meglévő parancsaira (`transcript.removeFillers`, `transc
 ## 2026-11-04 – #1 NVIDIA Parakeet és a Create captions ablak (upstream PR-ok)
 
 **Mit:** az upstream #3008 (Parakeet TDT v3, szószintű időzítés) és #3018 (Create captions ablak
-mentett sablonokkal, szóról szóra felirat) beolvasztása, ütközés nélkül. Commit `459953c8`.
+mentett sablonokkal, szóról szóra felirat) beolvasztása, ütközés nélkül. Commit `9dbb5dc7`.
 
 **Miért:** kész, közösségi megoldás; ha az upstream befogadja, nálunk ugyanazok a commitok vannak.
 
