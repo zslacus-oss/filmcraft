@@ -58,6 +58,8 @@ pub enum Language {
     /// Swedish.
     Sv,
     Tr,
+    /// Hungarian; Latin with ő and ű, covered by the bundled fonts.
+    Hu,
 }
 
 static JAPANESE: OnceLock<Catalog> = OnceLock::new();
@@ -76,9 +78,10 @@ static BOSNIAN: OnceLock<Catalog> = OnceLock::new();
 static CZECH: OnceLock<Catalog> = OnceLock::new();
 static SWEDISH: OnceLock<Catalog> = OnceLock::new();
 static TURKISH: OnceLock<Catalog> = OnceLock::new();
+static HUNGARIAN: OnceLock<Catalog> = OnceLock::new();
 
 impl Language {
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 18] = [
         Self::En,
         Self::Ja,
         Self::Es,
@@ -96,6 +99,7 @@ impl Language {
         Self::Sv,
         Self::Tr,
         Self::Bs,
+        Self::Hu,
     ];
 
     /// BCP 47 tag for AccessKit and the web IME's hidden input. Keep the persisted spelling
@@ -119,6 +123,7 @@ impl Language {
             Self::Pl => "pl",
             Self::Sv => "sv",
             Self::Tr => "tr",
+            Self::Hu => "hu",
         }
     }
 
@@ -141,6 +146,7 @@ impl Language {
             Self::Pl => "Polski",
             Self::Sv => "Svenska",
             Self::Tr => "Türkçe",
+            Self::Hu => "Magyar",
         }
     }
 
@@ -163,6 +169,7 @@ impl Language {
             "pl" => Some(Self::Pl),
             "sv" => Some(Self::Sv),
             "tr" => Some(Self::Tr),
+            "hu" => Some(Self::Hu),
             _ => None,
         }
     }
@@ -177,7 +184,7 @@ impl Language {
     /// only for Simplified locales (`zh`, `zh-CN`, `zh-SG`, `zh-Hans…`); Traditional ones (`zh-TW`,
     /// `zh-HK`, `zh-MO`, `zh-Hant…`) are skipped.
     pub fn from_locales(tags: &[String]) -> Self {
-        const PRIMARY: [(&str, Language); 17] = [
+        const PRIMARY: [(&str, Language); 18] = [
             ("en", Language::En),
             ("ja", Language::Ja),
             ("es", Language::Es),
@@ -195,6 +202,7 @@ impl Language {
             ("pl", Language::Pl),
             ("sv", Language::Sv),
             ("tr", Language::Tr),
+            ("hu", Language::Hu),
         ];
         tags.iter()
             .find_map(|tag| {
@@ -232,6 +240,7 @@ impl Language {
             Self::Pl => "pl",
             Self::Sv => "sv",
             Self::Tr => "tr",
+            Self::Hu => "hu",
         }
     }
 
@@ -255,6 +264,7 @@ impl Language {
             Self::Pl => Some(POLISH.get_or_init(|| Catalog::parse(include_str!("i18n/pl.tsv")))),
             Self::Sv => Some(SWEDISH.get_or_init(|| Catalog::parse(include_str!("i18n/sv.tsv")))),
             Self::Tr => Some(TURKISH.get_or_init(|| Catalog::parse(include_str!("i18n/tr.tsv")))),
+            Self::Hu => Some(HUNGARIAN.get_or_init(|| Catalog::parse(include_str!("i18n/hu.tsv")))),
         }
     }
 

@@ -20,6 +20,7 @@ fn catalog_text(l: Language) -> Option<&'static str> {
         Language::Pl => Some(include_str!("pl.tsv")),
         Language::Sv => Some(include_str!("sv.tsv")),
         Language::Tr => Some(include_str!("tr.tsv")),
+        Language::Hu => Some(include_str!("hu.tsv")),
     }
 }
 
@@ -73,6 +74,7 @@ fn unknown_strings_pass_through_and_languages_round_trip() {
         (Language::Pl, "Polski"),
         (Language::Sv, "Svenska"),
         (Language::Tr, "Türkçe"),
+        (Language::Hu, "Magyar"),
     ] {
         assert_eq!(l.name(), name);
     }
@@ -528,6 +530,7 @@ fn language_commands_switch_and_persist_without_a_document() {
         ("swedish", Language::Sv, "sv", "Svenska", Some(("app.language.italian", "Italiano"))),
         ("turkish", Language::Tr, "tr", "Türkçe", Some(("app.language.italian", "Italiano"))),
         ("bosnian", Language::Bs, "bs", "Bosanski", Some(("app.language.italian", "Italiano"))),
+        ("hungarian", Language::Hu, "hu", "Magyar", Some(("app.language.italian", "Italiano"))),
     ] {
         switch_and_check(&mut app, &ctx, name, lang, code, own, earlier);
     }
@@ -834,6 +837,16 @@ fn swedish_renders_with_bundled_fonts() {
     let alphabet = "ÅÄÖÉÜåäöéü";
     let letters = entries.iter().flat_map(|(_, _, sv)| sv.chars()).filter(|ch| ch.is_alphabetic() || "“”‘’–—…".contains(*ch));
     assert_bundled_fonts_cover(alphabet.chars().chain(Language::Sv.name().chars()).chain(letters));
+}
+
+#[test]
+fn hungarian_renders_with_bundled_fonts() {
+    let (entries, _) = catalog::parse_entries(include_str!("hu.tsv"));
+    // every Hungarian letter (ő and ű are Latin Extended-A, outside Latin-1), and every letter, curly
+    // quote, dash and ellipsis the entries use
+    let alphabet = "ÁÉÍÓÖŐÚÜŰáéíóöőúüű";
+    let letters = entries.iter().flat_map(|(_, _, hu)| hu.chars()).filter(|ch| ch.is_alphabetic() || "“”„‘’–—…".contains(*ch));
+    assert_bundled_fonts_cover(alphabet.chars().chain(Language::Hu.name().chars()).chain(letters));
 }
 
 #[test]
