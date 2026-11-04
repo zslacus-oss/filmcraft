@@ -20,17 +20,17 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 | 3. **Gyors durva vágás** | Szekvencia ▸ LIKE ▸ Gyors durva vágás | magyar leirat készül, majd kivágja a töltelékhangokat („ö", „öö", „hmm", „izé"…) és a 0,6 mp-nél hosszabb szüneteket, 0,12 mp levegőt hagyva |
 | 4. **Ismételt mondatok** | Szekvencia ▸ LIKE ▸ Ismételt mondatok megjelölése | minden elrontott, újrakezdett mondat korábbi próbálkozása piros tartományjelölőt kap; az utolsó változat érintetlen. Amelyiket meg akarod tartani, annak töröld a jelölőjét |
 | 5. Ismétlések kivágása | Szekvencia ▸ LIKE ▸ Megjelölt ismétlések kivágása | csak a megmaradt piros jelölők alatti részt vágja ki (Ctrl+Z-vel visszavonható) |
-| 5/b Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
-| 5. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
-| 6. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
-| 7. Kézi simítás | Ablak ▸ Munkaterületek ▸ Feliratok és grafika | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
-| 7/b **Hangtisztítás** | Szekvencia ▸ LIKE ▸ Hangtisztítás | zajszűrés, dübörgés- és zúgásszűrés (50 Hz), hangosság-kiegyenlítés minden hangklipen |
-| 8. Stílus | Szöveg panel ▸ Feliratok, stíluscsík | betűtípus, méret, szín, körvonal, háttérdoboz, pozíció |
-| 9. **Export** | Szekvencia ▸ LIKE ▸ Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram (4:5), vagy „mind a négy platformra" | ráégetett felirattal (ha van), −14 LUFS hangossággal; a fájlok a projekt mellé, vagy a Dokumentumok\Like FilmCraft mappába kerülnek |
-| 9/b **Poszt-szöveg** | Szekvencia ▸ LIKE ▸ Poszt-szöveg és hashtagek (AI) | platformonként cím, nyitómondat, leírás, hashtagek egy fájlban; a Jegyzettömb megnyitja, onnan másold |
-| 10. Feltöltés | kézzel, a platformon | |
+| 6. Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
+| 7. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
+| 8. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
+| 9. Kézi simítás | Ablak ▸ Munkaterületek ▸ Feliratok és grafika | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
+| 10. **Hangtisztítás** | Szekvencia ▸ LIKE ▸ Hangtisztítás | zajszűrés, dübörgés- és zúgásszűrés (50 Hz), hangosság-kiegyenlítés minden hangklipen |
+| 11. Stílus | Szöveg panel ▸ Feliratok, stíluscsík | betűtípus, méret, szín, körvonal, háttérdoboz, pozíció |
+| 12. **Export** | Szekvencia ▸ LIKE ▸ Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram (4:5), vagy „mind a négy platformra" | ráégetett felirattal (ha van), −14 LUFS hangossággal; a fájlok a projekt mellé, vagy a Dokumentumok\Like FilmCraft mappába kerülnek |
+| 13. **Poszt-szöveg** | Szekvencia ▸ LIKE ▸ Poszt-szöveg és hashtagek (AI) | platformonként cím, nyitómondat, leírás, hashtagek egy fájlban; a Jegyzettömb megnyitja, onnan másold |
+| 14. Feltöltés | kézzel, a platformon | |
 
-A 3., 5. és 6. lépés mind visszavonható (Ctrl+Z).
+A LIKE-lépések mind visszavonhatók (Ctrl+Z).
 
 ## Ha valami nem megy
 
