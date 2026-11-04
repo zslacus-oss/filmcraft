@@ -20,10 +20,12 @@ pub mod demo;
 pub mod doc_path;
 pub mod essential_sound;
 pub mod export_tools;
+pub mod external_speech; // LIKE: external speech engine (docs/LIKE-VALTOZASNAPLO.md)
 pub mod graphic_templates;
 pub mod graphics;
 pub mod interchange;
 pub mod keyboard;
+pub mod like_tools; // LIKE: Sequence ▸ LIKE commands (docs/LIKE-VALTOZASNAPLO.md)
 mod keyframe_move;
 mod marker_edit;
 mod marker_export;
