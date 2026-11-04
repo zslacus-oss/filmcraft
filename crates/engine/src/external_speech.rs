@@ -179,16 +179,43 @@ pub fn run_engine_cancellable(exe: &Path, args: &[std::ffi::OsString], cancel: O
         return Ok(stdout);
     }
     let stderr = String::from_utf8_lossy(&stderr_bytes);
-    // The engine's own error lines (`hiba: …` / `error: …`) are the useful part; logs are noise.
-    let msg: Vec<&str> = stderr
-        .lines()
-        .map(str::trim)
-        .filter(|l| l.starts_with("hiba:") || l.starts_with("error:"))
-        .map(|l| l.trim_start_matches("hiba:").trim_start_matches("error:").trim())
-        .collect();
-    let msg = if msg.is_empty() { stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string() } else { msg.join("; ") };
+    let msg = engine_error_message(&stderr);
     let code = status.code().map(|c| c.to_string()).unwrap_or_else(|| "?".into());
     Err(if msg.is_empty() { format!("the speech engine failed (exit code {code})") } else { format!("the speech engine failed (exit code {code}): {msg}") })
+}
+
+/// Longest error text passed on to the user (characters).
+const MAX_ERROR_CHARS: usize = 600;
+
+/// The engine's own error (`hiba: …` / `error: …`) out of its stderr.
+///
+/// An error can span several lines (a provider's JSON reply), so the lines
+/// after it belong to it until the next log line (`[date][module]…`). They
+/// are joined on one line and capped; log lines are noise.
+fn engine_error_message(stderr: &str) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    let mut in_error = false;
+    for line in stderr.lines().map(str::trim) {
+        if line.starts_with("hiba:") || line.starts_with("error:") {
+            in_error = true;
+            parts.push(line.trim_start_matches("hiba:").trim_start_matches("error:").trim().to_string());
+        } else if line.starts_with('[') {
+            in_error = false;
+        } else if in_error
+            && !line.is_empty()
+            && let Some(last) = parts.last_mut()
+        {
+            last.push(' ');
+            last.push_str(line);
+        }
+    }
+    let msg = if parts.is_empty() { stderr.lines().rev().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string() } else { parts.join("; ") };
+    if msg.chars().count() > MAX_ERROR_CHARS {
+        let cut: String = msg.chars().take(MAX_ERROR_CHARS).collect();
+        format!("{cut}…")
+    } else {
+        msg
+    }
 }
 
 #[derive(Deserialize)]
@@ -300,6 +327,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_multi_line_engine_error_is_kept_whole() {
+        // Before: only "HTTP 400: {" reached the user, the reason was lost.
+        let stderr = "[2026-11-04][17:10:38][x][INFO] loaded\nhiba: AI hiba: HTTP 400: {\n  \"error\": {\n    \"message\": \"schema must have a 'type' key.\"\n  }\n}\n[2026-11-04][17:10:39][x][INFO] done\n";
+        let msg = engine_error_message(stderr);
+        assert!(msg.starts_with("AI hiba: HTTP 400: {"));
+        assert!(msg.contains("schema must have a 'type' key."));
+        assert!(!msg.contains("done"));
+    }
+
+    #[test]
+    fn a_huge_engine_error_is_capped() {
+        let stderr = format!("hiba: {}", "x".repeat(5000));
+        assert!(engine_error_message(&stderr).chars().count() <= MAX_ERROR_CHARS + 1);
+    }
+
+    #[test]
     fn wav_header_describes_mono_16k_pcm() {
         let b = wav_bytes(&[0.0, 1.0, -1.0, f32::NAN]);
         assert_eq!(&b[0..4], b"RIFF");
@@ -358,7 +401,7 @@ mod tests {
     #[test]
     fn cancel_stops_a_running_engine() {
         let cancel = AtomicBool::new(false);
-        let started = std::time::Instant::now();
+        let started = web_time::Instant::now();
         std::thread::scope(|scope| {
             scope.spawn(|| {
                 std::thread::sleep(std::time::Duration::from_millis(300));

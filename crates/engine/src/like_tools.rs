@@ -271,13 +271,21 @@ fn apply(s: &mut Session, out: Output) -> Result<Value> {
 
 /// Open a finished text file for the user (Notepad on Windows, the default app elsewhere).
 fn open_document(path: &Path) {
-    let r = if cfg!(windows) {
-        std::process::Command::new("notepad.exe").arg(path).spawn()
+    let program = if cfg!(windows) {
+        "notepad.exe"
     } else if cfg!(target_os = "macos") {
-        std::process::Command::new("open").arg(path).spawn()
+        "open"
     } else {
-        std::process::Command::new("xdg-open").arg(path).spawn()
+        "xdg-open"
     };
+    // Detached from our stdio: an inherited handle kept a CLI/MCP caller's pipe open
+    // until the user closed Notepad.
+    let r = std::process::Command::new(program)
+        .arg(path)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn();
     if let Err(e) = r {
         log::warn!("could not open {}: {e}", path.display());
     }

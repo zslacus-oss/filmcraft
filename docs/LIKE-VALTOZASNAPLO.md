@@ -7,6 +7,35 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-04 – #8 AI-feliratjavítás és poszt-szöveg élesben (OpenAI)
+
+Élő próba a tulajdonos felvételén, új OpenAI-kulccsal (a régit az OpenAI elutasította).
+
+**Eredmény:** az AI-javítás 11 feliratblokkot javított, a sorhossz legfeljebb 42 karakter maradt
+(„Marról” → „Ma arról”, „döcspórról” → „időt spórol”, „lájkérm” → „LIKE CRM”). A poszt-szöveg
+öt platformra elkészült, és megnyílt a Jegyzettömbben.
+
+**Hibák és javításuk:**
+- **Poszt-szöveg HTTP 400 OpenAI-jal.** A LIKE Diktálás `subtitle_repurpose::output_schema` és
+  `text_cards::suggestion_schema` sémája dupla csomagolásban ment ki (az `llm_client` maga is
+  becsomagolja). Az Anthropic szövegbe ágyazva kapta, ezért nem jött elő. Javítva a LIKE
+  Diktálásban, regressziós teszttel.
+- **A 403-as válasz „érvénytelen kulcsnak” látszott.** A LIKE Diktálás `classify_api_error`
+  mostantól csak a 401-et kezeli hibás kulcsként. A 403 a szolgáltató indoklásával jelenik meg,
+  a 401/403 indoklása pedig a naplóba kerül.
+- **A többsoros motorhiba csonkán érkezett** („HTTP 400: {”). CSERE:
+  `crates/engine/src/external_speech.rs`, `engine_error_message`: a `hiba:` utáni sorokat is
+  hozzáveszi (legfeljebb 600 karakter). Két új teszt.
+- **A Jegyzettömb fogva tartotta a CLI kimenetét,** amíg be nem zárták. CSERE:
+  `crates/engine/src/like_tools.rs`, `open_document`: leválasztott stdio.
+- A megszakítási teszt `std::time::Instant`-ot használt (wasm-szabály). CSERE: `web_time::Instant`.
+
+**Tesztek:** engine 911 zöld. Egy upstream teszt
+(`export_tests::single_frame_in_out_exports_warn_without_changing_the_output`) párhuzamos futásnál
+Windows-fájlzár miatt néha elbukik, egyedül futtatva zöld. Nem a mi kódunk. LIKE Diktálás: 832 zöld.
+
+---
+
 ## 2026-11-04 – #7 Javítások az első élő próba alapján
 
 Élő próba: a tulajdonos 88 mp-es diktálása (szándékos „ööö”-kkel, szünetekkel, újrakezdett
