@@ -7,6 +7,24 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-04 – #6 Hangtisztítás, platform-export, poszt-szöveg
+
+**Mit:** Szekvencia ▸ LIKE ▸
+- „Hangtisztítás” – minden hangklip párbeszéd típusú lesz, a beépített „Clean Up Noisy Dialogue”
+  sablon (zaj, dübörgés, zúgás, dinamika), zúgás 50 Hz, majd hangosság-kiegyenlítés
+  (`essentialSound.*` parancsok, saját DSP).
+- „Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram
+  (4:5) / mind a négy” – a beépített exportsablonokra épül (`file.exportMedia`), felirat
+  ráégetve, ha van, −14 LUFS; a fájl a projekt mellé vagy a Dokumentumok\Like FilmCraft mappába.
+- „Poszt-szöveg és hashtagek (AI)” – háttérfeladat; a LIKE Diktálás meglévő `SUB-REP` láncát
+  hívja (`--repurpose`), a kész Markdown-fájlt a Jegyzettömb megnyitja.
+- Upstream-fájl nem változott.
+
+**Teszt:** 33 teszt zöld, köztük valódi 1:1 export a bemutató projektből és a hangtisztítás
+beállításainak ellenőrzése. A Diktálás-oldalon 2 új teszt (`f63b1a2`).
+
+---
+
 ## 2026-11-04 – #5 Ismételt mondatok (take-ek) megjelölése és kivágása
 
 **Mit:** Szekvencia ▸ LIKE ▸ „Ismételt mondatok megjelölése” és „Megjelölt ismétlések kivágása”.

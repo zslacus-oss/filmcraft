@@ -111,6 +111,7 @@ enum Then {
 enum Output {
     Transcripts { results: Vec<(ItemId, Transcript)>, then: Then },
     Corrections { snapshot: Vec<(ClipId, String)>, fixed: Vec<(u64, String)>, warnings: Vec<String> },
+    PostTexts { path: std::path::PathBuf },
 }
 
 struct Pending {
@@ -260,7 +261,158 @@ fn apply(s: &mut Session, out: Output) -> Result<Value> {
             }
             Ok(json!({"changed": changed, "warnings": warnings}))
         }
+        Output::PostTexts { path } => {
+            s.toast(format!("Poszt-szövegek kész: {}", path.display()));
+            open_document(&path);
+            Ok(json!({"path": path.display().to_string()}))
+        }
     }
+}
+
+/// Open a finished text file for the user (Notepad on Windows, the default app elsewhere).
+fn open_document(path: &Path) {
+    let r = if cfg!(windows) {
+        std::process::Command::new("notepad.exe").arg(path).spawn()
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").arg(path).spawn()
+    } else {
+        std::process::Command::new("xdg-open").arg(path).spawn()
+    };
+    if let Err(e) = r {
+        log::warn!("could not open {}: {e}", path.display());
+    }
+}
+
+/// Where LIKE writes files the user takes away (post texts, exports): next to the saved project,
+/// else `Documents/Like FilmCraft`.
+fn output_dir(s: &Session) -> std::path::PathBuf {
+    if let Some(dir) = s.path.as_deref().and_then(|p| Path::new(p).parent()).filter(|d| d.is_dir()) {
+        return dir.to_path_buf();
+    }
+    let home = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(std::path::PathBuf::from).unwrap_or_else(std::env::temp_dir);
+    let dir = home.join("Documents").join("Like FilmCraft");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// A file name made from the active sequence's name (characters Windows refuses replaced).
+fn sequence_file_stem(s: &Session) -> String {
+    let name = s.state.active_sequence.and_then(|id| s.project.item(id)).map(|it| it.name.clone()).unwrap_or_else(|| "Video".into());
+    let clean: String = name.chars().map(|c| if "<>:\"/\\|?*".contains(c) || c.is_control() { '_' } else { c }).collect();
+    let clean = clean.trim().trim_end_matches('.').to_string();
+    if clean.is_empty() { "Video".into() } else { clean }
+}
+
+fn post_texts(s: &mut Session, p: &Value) -> Result<Value> {
+    let cmd = "like.postTexts";
+    let exe = engine_exe(s, cmd)?;
+    let text = crate::transcript::sequence_words(s).iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ");
+    if text.trim().is_empty() {
+        return Err(bad(cmd, "the sequence has no transcript (Magyar leirat készítése first)"));
+    }
+    let platforms = str_p(p, "platforms").unwrap_or("youtube,tiktok,instagram,linkedin").to_string();
+    let out = output_dir(s).join(format!("{} – poszt-szövegek.md", sequence_file_stem(s)));
+    let wait = bool_p(p, "wait").unwrap_or(false);
+    let job = start_job(
+        s,
+        "Poszt-szöveg és hashtagek (AI)".into(),
+        1,
+        wait,
+        Box::new(move |prog: &filmcraft_export::Progress| {
+            *lock(&prog.status) = "Poszt-szövegek írása…".into();
+            let work = WorkDir::new().map_err(|e| format!("no temporary folder: {e}"))?;
+            let input = work.path.join("leirat.txt");
+            std::fs::write(&input, text.as_bytes()).map_err(|e| format!("could not write {}: {e}", input.display()))?;
+            let args: Vec<std::ffi::OsString> =
+                vec!["--repurpose".into(), input.into_os_string(), "--platforms".into(), platforms.into(), "--out".into(), out.clone().into_os_string()];
+            run_engine_cancellable(&exe, &args, Some(&prog.cancel))?;
+            if !out.is_file() {
+                return Err("the engine wrote no post texts".into());
+            }
+            Ok(Output::PostTexts { path: out })
+        }),
+    )?;
+    Ok(json!({"job": job, "background": !wait}))
+}
+
+// ---------------------------------------------------------------------------------------------
+// One-click audio clean-up and platform exports, on FilmCraft's own Essential Sound and export.
+// ---------------------------------------------------------------------------------------------
+
+/// Mains hum in Hungary (and the rest of Europe).
+const MAINS_HUM_HZ: u32 = 50;
+
+fn audio_clips(s: &Session) -> Vec<u64> {
+    s.active_sequence().map(|q| q.audio_tracks.iter().flat_map(|t| t.items.iter()).map(|it| it.id.0).collect()).unwrap_or_default()
+}
+
+fn has_audio_clips(s: &Session) -> std::result::Result<(), String> {
+    has_seq(s)?;
+    if audio_clips(s).is_empty() { Err("the sequence has no audio clips".into()) } else { Ok(()) }
+}
+
+/// Dialogue clean-up of every audio clip: the built-in "Clean Up Noisy Dialogue" preset (noise,
+/// rumble, hum, dynamics), hum at 50 Hz, then loudness matched.
+fn clean_audio(s: &mut Session, p: &Value) -> Result<Value> {
+    let clips = match p.get("clips").and_then(Value::as_array) {
+        Some(a) => a.iter().filter_map(Value::as_u64).collect(),
+        None => audio_clips(s),
+    };
+    if clips.is_empty() {
+        return Err(bad("like.cleanAudio", "the sequence has no audio clips"));
+    }
+    s.execute("essentialSound.setType", json!({"clips": clips, "type": "dialogue"}))?;
+    s.execute("essentialSound.applyPreset", json!({"clips": clips, "preset": "Clean Up Noisy Dialogue", "type": "dialogue"}))?;
+    s.execute("essentialSound.set", json!({"clips": clips, "key": "repair.humHz", "value": MAINS_HUM_HZ}))?;
+    let matched = s.execute("essentialSound.autoMatch", json!({"clips": clips}))?;
+    s.toast(format!("Hangtisztítás kész: {} klip (zajszűrés, zúgásszűrés {MAINS_HUM_HZ} Hz, hangosság)", clips.len()));
+    Ok(json!({"clips": clips.len(), "autoMatch": matched}))
+}
+
+/// A platform export: (file suffix, built-in preset, overridden frame size).
+fn platform_export(platform: &str) -> Option<(&'static str, &'static str, Option<(u32, u32)>)> {
+    Some(match platform {
+        "youtube" => ("YouTube 16x9", "YouTube 1080p Full HD", None),
+        "vertical" => ("TikTok-Reels-Shorts 9x16", "TikTok 1080×1920", None),
+        "square" => ("LinkedIn 1x1", "Social Vertical 1080×1920", Some((1080, 1080))),
+        "portrait" => ("LinkedIn-Instagram 4x5", "Social Vertical 1080×1920", Some((1080, 1350))),
+        _ => return None,
+    })
+}
+
+fn export_for(s: &mut Session, platform: &str, p: &Value) -> Result<Value> {
+    let cmd = "like.export";
+    let (suffix, preset, size) = platform_export(platform).ok_or_else(|| bad(cmd, format!("unknown platform `{platform}`")))?;
+    let has_captions = s.active_sequence().is_some_and(|q| q.caption_tracks.iter().any(|t| t.enabled && !t.captions.is_empty()));
+    let path = output_dir(s).join(format!("{} – {suffix}.mp4", sequence_file_stem(s)));
+    let mut q = json!({
+        "path": path.to_string_lossy(),
+        "preset": preset,
+        "burnCaptions": bool_p(p, "burnCaptions").unwrap_or(has_captions),
+        "loudnessLufs": -14.0,
+        "wait": bool_p(p, "wait").unwrap_or(false),
+    });
+    if let Some((w, h)) = size {
+        q["width"] = json!(w);
+        q["height"] = json!(h);
+    }
+    // optional range (In/Out, work area, or seconds) passed straight to file.exportMedia
+    for key in ["range", "startSeconds", "endSeconds"] {
+        if let Some(v) = p.get(key) {
+            q[key] = v.clone();
+        }
+    }
+    let r = s.execute("file.exportMedia", q)?;
+    s.toast(format!("Exportálás elindult: {}", path.display()));
+    Ok(json!({"path": path.display().to_string(), "export": r}))
+}
+
+fn export_all(s: &mut Session, p: &Value) -> Result<Value> {
+    let mut out = Vec::new();
+    for platform in ["youtube", "vertical", "square", "portrait"] {
+        out.push(export_for(s, platform, p)?);
+    }
+    Ok(json!({"exports": out}))
 }
 
 /// Media items to transcribe: `items`, else the media of the active sequence's enabled audio clips.
@@ -681,6 +833,13 @@ pub fn commands() -> Vec<CommandSpec> {
         spec("like.moveWordPrev", "Első szó vissza az előző feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, false)),
         spec("like.markRetakes", "Ismételt mondatok megjelölése", "{}", has_transcript, mark_retakes),
         spec("like.cutMarkedRetakes", "Megjelölt ismétlések kivágása", "{}", has_retake_markers, cut_marked_retakes),
+        spec("like.cleanAudio", "Hangtisztítás (zaj, zúgás, hangosság)", r#"{"clips":[id]?}"#, has_audio_clips, clean_audio),
+        spec("like.postTexts", "Poszt-szöveg és hashtagek (AI)", r#"{"platforms":"youtube,tiktok,instagram,linkedin"?}"#, has_transcript, post_texts),
+        spec("like.export.youtube", "Export: YouTube (16:9)", r#"{"burnCaptions":bool?}"#, has_seq, |s, p| export_for(s, "youtube", p)),
+        spec("like.export.vertical", "Export: TikTok / Reels / Shorts (9:16)", r#"{"burnCaptions":bool?}"#, has_seq, |s, p| export_for(s, "vertical", p)),
+        spec("like.export.square", "Export: LinkedIn (1:1)", r#"{"burnCaptions":bool?}"#, has_seq, |s, p| export_for(s, "square", p)),
+        spec("like.export.portrait", "Export: LinkedIn / Instagram (4:5)", r#"{"burnCaptions":bool?}"#, has_seq, |s, p| export_for(s, "portrait", p)),
+        spec("like.export.all", "Export: mind a négy platformra", r#"{"burnCaptions":bool?}"#, has_seq, export_all),
     ];
     // the ported detector's own commands (agents, tests); not in menus
     v.extend(repeats::commands());
@@ -721,6 +880,47 @@ mod tests {
         assert_eq!(filler_list(&json!({})).len(), HU_FILLERS.len());
         assert_eq!(filler_list(&json!({"fillers": "extended"})).len(), HU_FILLERS.len() + HU_FILLERS_EXTENDED.len());
         assert_eq!(filler_list(&json!({"fillers": ["x"]})), vec!["x".to_string()]);
+    }
+
+    #[test]
+    fn platform_exports_cover_the_four_formats() {
+        assert_eq!(platform_export("youtube").map(|p| p.2), Some(None));
+        assert_eq!(platform_export("square").map(|p| p.2), Some(Some((1080, 1080))));
+        assert_eq!(platform_export("portrait").map(|p| p.2), Some(Some((1080, 1350))));
+        assert!(platform_export("vertical").is_some());
+        assert!(platform_export("myspace").is_none());
+    }
+
+    #[test]
+    fn exports_and_cleanup_run_on_the_demo_project() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        // one-click audio clean-up
+        let r = s.execute("like.cleanAudio", json!({})).unwrap();
+        assert!(r["clips"].as_u64().unwrap() > 0, "{r}");
+        let q = s.active_sequence().unwrap();
+        let st = q.audio_tracks.iter().flat_map(|t| t.items.iter()).find_map(|it| it.essential.clone()).unwrap();
+        // the preset's repairs are on (its name clears once hum is set: a custom setting now)
+        assert!(st.repair.noise.on && st.repair.rumble.on && st.repair.dehum.on, "{:?}", st.repair);
+        assert_eq!(st.repair.hum_hz, MAINS_HUM_HZ);
+        // a 1:1 export of a short range, written to a temp folder
+        let dir = std::env::temp_dir().join(format!("like-export-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        s.path = Some(dir.join("teszt.fcproj").to_string_lossy().into_owned());
+        let e = s.execute("like.export.square", json!({"wait": true, "burnCaptions": false, "range": "custom", "startSeconds": 0, "endSeconds": 0.5})).unwrap();
+        let path = std::path::PathBuf::from(e["path"].as_str().unwrap());
+        assert!(path.starts_with(&dir), "{e}");
+        assert!(path.to_string_lossy().ends_with("LinkedIn 1x1.mp4"), "{e}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn file_stems_are_safe_on_windows() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        let stem = sequence_file_stem(&s);
+        assert!(!stem.is_empty());
+        assert!(!stem.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*']), "{stem}");
     }
 
     #[test]

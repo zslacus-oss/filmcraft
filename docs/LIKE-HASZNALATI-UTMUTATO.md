@@ -24,8 +24,10 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 | 5. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
 | 6. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
 | 7. Kézi simítás | Ablak ▸ Munkaterületek ▸ Feliratok és grafika | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
+| 7/b **Hangtisztítás** | Szekvencia ▸ LIKE ▸ Hangtisztítás | zajszűrés, dübörgés- és zúgásszűrés (50 Hz), hangosság-kiegyenlítés minden hangklipen |
 | 8. Stílus | Szöveg panel ▸ Feliratok, stíluscsík | betűtípus, méret, szín, körvonal, háttérdoboz, pozíció |
-| 9. Export | Fájl ▸ Exportálás | YouTube / 9:16 közösségi sablon; „Feliratok ráégetése a videóra" |
+| 9. **Export** | Szekvencia ▸ LIKE ▸ Export: YouTube (16:9) / TikTok-Reels-Shorts (9:16) / LinkedIn (1:1) / LinkedIn-Instagram (4:5), vagy „mind a négy platformra" | ráégetett felirattal (ha van), −14 LUFS hangossággal; a fájlok a projekt mellé, vagy a Dokumentumok\Like FilmCraft mappába kerülnek |
+| 9/b **Poszt-szöveg** | Szekvencia ▸ LIKE ▸ Poszt-szöveg és hashtagek (AI) | platformonként cím, nyitómondat, leírás, hashtagek egy fájlban; a Jegyzettömb megnyitja, onnan másold |
 | 10. Feltöltés | kézzel, a platformon | |
 
 A 3., 5. és 6. lépés mind visszavonható (Ctrl+Z).
