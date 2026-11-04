@@ -838,7 +838,11 @@ pub fn find_spoken_cuts(words: &[filmcraft_edit::transcript::SeqWord]) -> Vec<(s
 fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
     let words = crate::transcript::sequence_words(s);
     let hits = repeats::find_repeats(&words, &repeats::RepeatOptions::default());
-    let spoken = find_spoken_cuts(&words);
+    // A cue spoken inside an abandoned attempt the retake cut removes anyway is handled by that
+    // cut; marking its clause too would reach into the kept reading (live test, 2026-11-04:
+    // "…volt arra, hogy … tesztelni az elkészülő szoftvert, ez egy hiba volt …" lost its middle).
+    let spoken: Vec<_> =
+        find_spoken_cuts(&words).into_iter().filter(|(range, _)| !hits.iter().any(|h| range.end > h.cut.start && range.end <= h.cut.end)).collect();
     let rate = s.sequence_rate();
     // markers of an earlier run are replaced, not doubled
     let old: Vec<u64> = retake_markers(s).iter().map(|(id, _, _)| id.0).collect();

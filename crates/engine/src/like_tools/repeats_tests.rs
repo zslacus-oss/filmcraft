@@ -347,3 +347,30 @@ fn unrelated_words_that_join_alike_are_not_enough() {
     let (_, h) = find("Ma a fa kint áll | Ma afa kint áll");
     assert!(h.is_empty(), "{h:?}");
 }
+
+/// Élő próba (2026-11-04): a szóbeli jel egy kivágandó próbálkozáson belül hangzott el, és a
+/// két vágás együtt a megtartott mondat elejét is elvitte.
+#[test]
+fn a_cue_inside_an_abandoned_attempt_does_not_cut_the_kept_reading() {
+    let mut s = Session::default();
+    s.execute("file.openDemoProject", json!({})).unwrap();
+    let q = s.active_sequence().unwrap();
+    let a = &q.audio_tracks[0].items;
+    let (item, sin) = (a[0].item, a[0].source_in);
+    let text = "Remélem ez elég volt arra, hogy jól tudd tesztelni az elkészülő szoftvert, ez egy hiba volt most, \
+                ezt javítani kell, tehát remélem, hogy jól tudod javítani, az elkészülő szoftvert.";
+    let words: Vec<Value> = text
+        .split_whitespace()
+        .enumerate()
+        .map(|(k, w)| {
+            let a = sin + Tick::from_seconds_f64(0.1 + 0.12 * k as f64);
+            json!({"text": w, "start": a.0, "end": (a + Tick::from_seconds_f64(0.1)).0})
+        })
+        .collect();
+    s.execute("transcript.set", json!({"item": item.0, "transcript": {"language": "hu", "words": words}})).unwrap();
+    s.execute("like.markRetakes", json!({})).unwrap();
+    s.execute("like.cutMarkedRetakes", json!({})).unwrap();
+    let left = texts(&mut s).join(" ");
+    assert!(left.contains("hogy jól tudd tesztelni"), "{left}");
+    assert!(left.ends_with("az elkészülő szoftvert."), "{left}");
+}

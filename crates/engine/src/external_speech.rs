@@ -364,9 +364,10 @@ mod tests {
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 cancel.store(true, Ordering::Relaxed);
             });
-            // a command that would run for ~20 s
-            let args: Vec<std::ffi::OsString> = vec!["/c".into(), "ping -n 20 127.0.0.1".into()];
-            let r = run_engine_cancellable(Path::new("cmd"), &args, Some(&cancel));
+            // a program that would run for ~20 s, started directly (no `cmd` in between, so the
+            // kill reaches the process that holds the pipes)
+            let args: Vec<std::ffi::OsString> = vec!["-n".into(), "20".into(), "127.0.0.1".into()];
+            let r = run_engine_cancellable(Path::new("ping"), &args, Some(&cancel));
             assert_eq!(r.unwrap_err(), "stopped");
         });
         assert!(started.elapsed() < std::time::Duration::from_secs(10));
