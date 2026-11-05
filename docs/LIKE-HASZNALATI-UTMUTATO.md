@@ -2,15 +2,28 @@
 
 Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető legkevesebb kézi munkával.
 
+## Telepítés
+
+Egy telepítő tesz fel mindent: `Like-FilmCraft-<verzió>-x64-Telepito.exe`. Nem kér
+rendszergazdai jogot.
+
+- A program a `%LOCALAPPDATA%\Like FilmCraft\` mappába kerül, az asztalon és a Start menüben
+  „Like FilmCraft” ikonnal.
+- A „LIKE Diktálás beszédmotor” összetevő a magyar beszédmotort telepíti vagy frissíti. A
+  beállításaid, a szótárad és a letöltött modellek megmaradnak.
+- Frissítés: futtasd az újabb telepítőt. A projektjeid nem változnak.
+- Eltávolítás: Start menü ▸ Like FilmCraft ▸ Like FilmCraft eltávolítása. A LIKE Diktálás
+  külön program, a saját eltávolítójával távolítható el.
+
 ## Mi kell hozzá
 
 1. **Like FilmCraft** (ez a program).
-2. **LIKE Diktálás 2.4.3 vagy újabb** telepítve (ez a magyar beszédmotor). A FilmCraft magától
-   megtalálja a `%LOCALAPPDATA%\LIKE Diktálás\` mappában.
-3. A LIKE Diktálásban beállítva: a beszédmodell (például NVIDIA Nemotron Streaming vagy Whisper
-   Large v3 Turbo), a személyes szótár (ide kerüljenek a márka- és terméknevek, pl. „LIKE CRM"), és –
-   az AI-javításhoz – egy AI-szolgáltató kulccsal. Szóidőhöz ajánlott egy szóidős modell
-   (Parakeet / Nemotron) letöltése is; enélkül a szóidő becsült lesz.
+2. **LIKE Diktálás 2.4.3 vagy újabb** (ez a magyar beszédmotor; a közös telepítő felteszi). A
+   FilmCraft magától megtalálja a `%LOCALAPPDATA%\LIKE Diktálás\` mappában.
+3. A LIKE Diktálásban beállítva: a személyes szótár (ide kerüljenek a márka- és terméknevek, pl.
+   „LIKE CRM"), és – az AI-javításhoz – egy AI-szolgáltató kulccsal. A feliratokhoz a Diktálás a
+   Parakeet V3 modellt használja (szóidővel); ha nincs letöltve, a Diktálás modellkezelőjében töltsd
+   le. A hosszú felvételeket (fél óra is) a szüneteknél darabolva dolgozza fel.
 
 ## A munkafolyamat
 
@@ -32,6 +45,21 @@ Cél: egy nyers beszédes videóból kész, magyar feliratos videó a lehető le
 | 14. Feltöltés | kézzel, a platformon | |
 
 A LIKE-lépések mind visszavonhatók (Ctrl+Z).
+
+## Mérd az időt
+
+A cél a 6–8 órás munka drasztikus csökkentése. Egy-két videónál írd fel, mennyi ideig tartott:
+
+| Szakasz | Lépések | Perc |
+|---|---|---|
+| Gépi előkészítés | 1–5. (import, durva vágás, ismétlések) | |
+| Kézi vágás | 6. | |
+| Felirat | 7–9. | |
+| Kép és hang | 10–11. | |
+| Export és poszt-szöveg | 12–13. | |
+| **Összesen** | | |
+
+Ahol a legtöbb perc megy el, oda kerül a következő fejlesztés.
 
 ## Ha valami nem megy
 

@@ -7,6 +7,41 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-05 – #10 Upstream frissítés, új Diktálás-motor, közös telepítő
+
+**Upstream frissítés:** 23 új FilmCraft-commit beolvasztva ütközés nélkül (többek közt
+H.264 High 10 export, Premiere-sablonok importja, hangmagasság megtartása sebességváltásnál,
+mappák behúzása, elforgatott videó GPU-n). Mentési pont: `backup_20261105_elotte_upstream` címke.
+HOZZÁADÁS: `hu.tsv` – 58 új felületszöveg magyarul, és egy megváltozott szöveg frissítve
+(„Drop files or folders…”). A 19 megmaradt „hiányzó” a saját, eleve magyar LIKE-menüpontunk.
+
+**LIKE Diktálás (2.4.3 PROBA3) beépítése:** a FilmCraft oldalon nem kellett kódot módosítani, a
+hídprotokoll (`--subtitle-file`, 1. formátumverzió) változatlan. A FilmCraft a telepített motort
+használja. Az új motor: Parakeet V3 a feliratokhoz, a hosszú hang darabolása a szüneteknél, a halk
+beszéd kiemelése a hangfelismerés (VAD) előtt, a felismerés külön folyamatban (összeomlás után
+újrapróbál). A Diktálás `like-wip-20260923` ága mostantól a privát GitHub-tárolóban is megvan.
+
+**Élő próba a frissített programmal** (`filmcraft-cli run`, ablak nélkül):
+- 90 mp-es videó, teljes lánc: durva vágás, 2 ismétlés és 2 szóbeli vágási jel kivágva,
+  13 felirat, AI-javítás, hangtisztítás, négy export → 49 mp-es videó; 207 mp gépidő, ennek nagy
+  része a négy export. A leghosszabb sor 42 karakter, a „LIKE CRM” név helyes.
+- 10 perces hangfelvétel: leirat, durva vágás és 119 felirat összesen 21 mp alatt; a felirat
+  a felvétel végéig tart, a leghosszabb sor 42 karakter, egyik felirat sem több két sornál.
+
+**Közös telepítő (ÚJ):** `packaging/like/like-filmcraft.nsi` + `build-installer.ps1`. Upstream
+fájl nem változott. Felhasználói telepítés a `%LOCALAPPDATA%\Like FilmCraft` mappába (nem kér
+rendszergazdai jogot), asztali és Start menü ikon, útmutató, eltávolító. A „LIKE Diktálás
+beszédmotor” összetevő a Diktálás telepítőjét csendes módban futtatja. A `/NODIKTALAS`
+kapcsolóval csak a FilmCraft települ. Kimenet: `target\like-installer\Like-FilmCraft-<verzió>-x64-Telepito.exe`
+(nem kerül a tárolóba).
+
+**Csere a tulajdonos gépén:** a Like FilmCraft 0.17.0-like.10 telepítve, az asztali
+„Like FilmCraft” ikon a telepített példányra mutat (eddig a fejlesztői `target\release`
+mappára). A régi `filmcraft.exe` ikon törölve. A hivatalos FilmCraft 0.17.0 (MSI, Program Files)
+a tulajdonos engedélyével (UAC) eltávolítva; helyette a Like FilmCraft fut.
+
+---
+
 ## 2026-11-04 – #9 Feliratstílusok, Felirat munkaterület, helyes álló export
 
 **Teljes működési próba valódi videón.** A tulajdonos 88 mp-es hangfelvételéből 90 mp-es MP4 készült
