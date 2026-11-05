@@ -7,6 +7,32 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-05 – #13 Claude-kapcsolat (MCP) tartósan; az eredeti frissítő kikapcsolva
+
+**Claude Code kapcsolat:** a FilmCraft MCP-szervere eddig csak ebben a fejlesztői mappában élt
+(`.mcp.json`, a fejlesztői `target\release` példányra mutatva), és a futó programhoz nem tudott
+kapcsolódni, mert hiányzott a vezérlőkulcs. Beállítva a tulajdonos gépén (a tárolóban nincs titok):
+- felhasználói környezeti változók: `FILMCRAFT_CONTROL_TOKEN` (véletlen, 32 bájtos kulcs) és
+  `FILMCRAFT_CONTROL_PORT=9876`. Az asztali ikonról indított Like FilmCraft így magától fogadja a
+  vezérlést, csak a gépen belül (127.0.0.1) és csak ezzel a kulccsal;
+- Claude Code, felhasználói szint: `like-filmcraft` MCP-szerver →
+  `%LOCALAPPDATA%\Like FilmCraft\filmcraft-cli.exe mcp --bridge 127.0.0.1:9876` (bármelyik
+  mappából elérhető).
+Élő próba: a Claude képernyőképet kért a futó programról, és kattintott benne.
+
+**Az eredeti FilmCraft frissítője kikapcsolva.** Az élő próba közben a program felajánlotta:
+„FilmCraft 0.17.1 – Update and restart”. Ez a gomb a hivatalos FilmCraftot telepítette volna
+vissza, és a magyar felület meg a LIKE-eszközök elvesztek volna. CSERE (upstream):
+`crates/ui-egui/src/updates_ui.rs` – `LIKE_EDITION`: nincs indításkori ellenőrzés és ajánlat; a
+Súgó ▸ Frissítések keresése üzenetben elmondja, hogy a Like FilmCraft a saját telepítőjével frissül.
+Új teszt: `like_edition_never_checks_upstream`. Az upstream újdonságait továbbra is mi olvasztjuk
+be (lásd #10).
+
+**Megjegyzés:** a felső sáv a projekt nevét mutatja. A bemutató projekt neve „FilmCraft – Demo
+Project”, ez nem a program neve.
+
+---
+
 ## 2026-11-05 – #12 Saját név: Like FilmCraft
 
 **Miért:** a program a Névjegyben és az ablakcímben „FilmCraft 0.17.0”-nak nevezte magát, ezért

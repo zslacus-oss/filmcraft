@@ -47,7 +47,16 @@ impl FilmcraftApp {
     }
 }
 
+/// LIKE: the upstream updater would replace Like FilmCraft with stock FilmCraft (and drop the
+/// Hungarian interface and the LIKE tools). Like FilmCraft updates come from its own installer
+/// (packaging/like), so no check runs (docs/LIKE-VALTOZASNAPLO.md #13).
+pub(crate) const LIKE_EDITION: bool = true;
+
 pub(crate) fn check(app: &mut FilmcraftApp) -> Result<Value, String> {
+    if LIKE_EDITION {
+        app.session.toast("A Like FilmCraft a saját telepítőjével frissül (Like-FilmCraft-…-Telepito.exe); az eredeti FilmCraft frissítője ki van kapcsolva, mert felülírná a magyar és LIKE fejlesztéseket.");
+        return Ok(Value::Null);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     {
         app.updates_rt.check_requested = true;
@@ -69,7 +78,10 @@ pub(crate) fn tick(app: &mut FilmcraftApp, ctx: &egui::Context) {
     {
         let rt = &mut app.updates_rt;
         rt.repaint = Some(ctx.clone());
-        if std::mem::take(&mut rt.check_requested) {
+        if LIKE_EDITION {
+            // no upstream update check or prompt (see LIKE_EDITION)
+            rt.check_requested = false;
+        } else if std::mem::take(&mut rt.check_requested) {
             rt.updater.check_now(ctx);
         } else if rt.startup_check {
             rt.updater.check_at_start(ctx);
@@ -146,6 +158,16 @@ mod tests {
             assert!(!rt.updater.prompt_open());
             assert_eq!(rt.updater.status(), &Status::Idle);
         }
+    }
+
+    /// LIKE: Help ▸ Check for Updates must never start the upstream updater.
+    #[test]
+    fn like_edition_never_checks_upstream() {
+        let mut app = FilmcraftApp::new(filmcraft_engine::Session::default());
+        check(&mut app).unwrap();
+        assert!(!app.updates_rt.manual_window_open);
+        #[cfg(not(target_arch = "wasm32"))]
+        assert!(!app.updates_rt.check_requested);
     }
 
     #[test]
