@@ -16,6 +16,11 @@
 //! * `like.moveWordNext` / `like.moveWordPrev` — move the boundary word of the selected caption
 //!   into the next / previous caption, retiming the cut at that word.
 //! * `like.openEngineSettings` — the engine's own window (dictionary, model, AI provider).
+//! * `like.autoPrep` — everything above in one click: transcript, rough cut, retakes, captions,
+//!   readable timing, audio clean-up, then the AI correction in the background.
+//! * `like.fixReadingSpeed` — captions too fast to read grow into the silence around them
+//!   ([`readability`]); the ones that still are get selected.
+//! * `like.workTime` — how long the user has worked on this project ([`worktime`]).
 
 use std::path::Path;
 use std::sync::atomic::Ordering;
@@ -33,7 +38,9 @@ use crate::{EngineError, Result, Session};
 type Run = fn(&mut Session, &Value) -> Result<Value>;
 type Enabled = fn(&Session) -> std::result::Result<(), String>;
 
+pub mod readability;
 pub mod repeats;
+pub mod worktime;
 
 const MENU: &[&str] = &["Sequence", "LIKE"];
 
@@ -110,13 +117,25 @@ enum Then {
     Nothing,
     QuickCut(Value),
     Captions(Value),
+    AutoPrep(Value),
 }
 
 /// The result a LIKE job hands back to the UI thread.
 enum Output {
-    Transcripts { results: Vec<(ItemId, Transcript)>, then: Then },
-    Corrections { snapshot: Vec<(ClipId, String)>, fixed: Vec<(u64, String)>, warnings: Vec<String> },
-    PostTexts { path: std::path::PathBuf },
+    Transcripts {
+        results: Vec<(ItemId, Transcript)>,
+        then: Then,
+    },
+    /// `readable`: fix the reading speed afterwards (the model may lengthen captions).
+    Corrections {
+        snapshot: Vec<(ClipId, String)>,
+        fixed: Vec<(u64, String)>,
+        warnings: Vec<String>,
+        readable: bool,
+    },
+    PostTexts {
+        path: std::path::PathBuf,
+    },
 }
 
 struct Pending {
@@ -146,6 +165,7 @@ fn start_job(s: &mut Session, label: String, total: u64, wait: bool, work: Work)
         let seconds = t0.elapsed().as_secs_f64();
         let report = match r {
             Ok(output) => {
+                worktime::add_machine(seconds);
                 *lock(&o) = Some(output);
                 *lock(&prog.status) = "Kész".into();
                 Ok(filmcraft_export::Report { path: String::new(), frames: 0, seconds, bytes: 0, render_fps: 0.0, extra_files: Vec::new() })
@@ -177,6 +197,7 @@ fn start_job(s: &mut Session, label: String, total: u64, wait: bool, work: Work)
 /// Apply finished LIKE jobs of this session. Called once per UI frame from
 /// [`Session::poll_persistence`] and after synchronous runs.
 pub fn poll(s: &mut Session) {
+    worktime::poll(s);
     let ready: Vec<(Arc<filmcraft_export::Progress>, Option<Output>)> = {
         let mut pending = lock(&PENDING);
         let mut ready = Vec::new();
@@ -243,9 +264,10 @@ fn apply(s: &mut Session, out: Output) -> Result<Value> {
                     s.toast("Magyar felirat kész");
                     Ok(r)
                 }
+                Then::AutoPrep(p) => auto_prep_now(s, &p),
             }
         }
-        Output::Corrections { snapshot, fixed, warnings } => {
+        Output::Corrections { snapshot, fixed, warnings, readable } => {
             let mut changed = 0usize;
             for (id, text) in fixed {
                 let Some((_, old)) = snapshot.iter().find(|(c, _)| c.0 == id) else { continue };
@@ -267,7 +289,8 @@ fn apply(s: &mut Session, out: Output) -> Result<Value> {
             for w in &warnings {
                 s.error_toast("like", format!("LIKE: {w}"));
             }
-            Ok(json!({"changed": changed, "warnings": warnings}))
+            let speed = if readable && changed > 0 && has_captions(s).is_ok() { Some(fix_reading_speed(s, &json!({}))?) } else { None };
+            Ok(json!({"changed": changed, "warnings": warnings, "readingSpeed": speed}))
         }
         Output::PostTexts { path } => {
             s.toast(format!("Poszt-szövegek kész: {}", path.display()));
@@ -728,6 +751,7 @@ fn correct_captions(s: &mut Session, p: &Value) -> Result<Value> {
     let input_json = json!({"captions": snapshot.iter().map(|(id, text)| json!({"id": id.0, "text": text.replace('\n', " ")})).collect::<Vec<_>>()});
     let n = snapshot.len();
     let wait = bool_p(p, "wait").unwrap_or(false);
+    let readable = bool_p(p, "fixReadingSpeed").unwrap_or(false);
     let job = start_job(
         s,
         format!("Felirat AI-javítása ({n} felirat)"),
@@ -751,7 +775,7 @@ fn correct_captions(s: &mut Session, p: &Value) -> Result<Value> {
                 .unwrap_or_default();
             let warnings: Vec<String> =
                 v.get("warnings").and_then(Value::as_array).map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default();
-            Ok(Output::Corrections { snapshot, fixed, warnings })
+            Ok(Output::Corrections { snapshot, fixed, warnings, readable })
         }),
     )?;
     Ok(json!({"job": job, "captions": n, "background": !wait}))
@@ -1041,6 +1065,19 @@ pub fn find_spoken_cuts(words: &[filmcraft_edit::transcript::SeqWord]) -> Vec<(s
 }
 
 fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
+    let (marked, cues) = mark_retakes_quiet(s)?;
+    s.toast(if marked + cues == 0 {
+        "Nem találtam ismételt mondatot vagy szóbeli vágási jelet".to_string()
+    } else {
+        format!(
+            "{marked} ismételt próbálkozás és {cues} szóbeli vágási jel megjelölve pirossal. Amelyiket meg akarod tartani, annak töröld a jelölőjét, majd: Megjelölt ismétlések kivágása"
+        )
+    });
+    Ok(json!({"marked": marked, "spokenCues": cues}))
+}
+
+/// Mark retakes and spoken cut cues; returns (retakes, cues).
+fn mark_retakes_quiet(s: &mut Session) -> Result<(usize, usize)> {
     let words = crate::transcript::sequence_words(s);
     let hits = repeats::find_repeats(&words, &repeats::RepeatOptions::default());
     // A cue spoken inside an abandoned attempt the retake cut removes anyway is handled by that
@@ -1078,14 +1115,7 @@ fn mark_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
         )?;
         cues += 1;
     }
-    s.toast(if marked + cues == 0 {
-        "Nem találtam ismételt mondatot vagy szóbeli vágási jelet".to_string()
-    } else {
-        format!(
-            "{marked} ismételt próbálkozás és {cues} szóbeli vágási jel megjelölve pirossal. Amelyiket meg akarod tartani, annak töröld a jelölőjét, majd: Megjelölt ismétlések kivágása"
-        )
-    });
-    Ok(json!({"marked": marked, "spokenCues": cues}))
+    Ok((marked, cues))
 }
 
 /// Overlapping or touching ranges merged, in time order.
@@ -1120,8 +1150,146 @@ fn cut_marked_retakes(s: &mut Session, _p: &Value) -> Result<Value> {
     Ok(json!({"removed": n, "ticks": total.0}))
 }
 
+// ---------------------------------------------------------------------------------------------
+// Readable caption timing, one-click preparation, work time.
+// ---------------------------------------------------------------------------------------------
+
+/// Captions of `track` too fast to read grow into the silence around them, in one undo step;
+/// those that still are get selected.
+fn fix_reading_speed_on(s: &mut Session, track: filmcraft_project::TrackId) -> Result<Value> {
+    let cmd = "like.fixReadingSpeed";
+    let rate = s.sequence_rate();
+    let (mut caps, media_end) = {
+        let q = s.active_sequence().ok_or(EngineError::NoSequence)?;
+        let t = q.caption_track(track).ok_or_else(|| bad(cmd, "no such caption track"))?;
+        let caps: Vec<(ClipId, Tick, Tick, usize)> = t.captions.iter().map(|c| (c.id, c.start, c.end(), readability::chars(&c.text))).collect();
+        (caps, q.video_tracks.iter().chain(&q.audio_tracks).map(|t| t.end()).max())
+    };
+    caps.sort_by_key(|c| c.1);
+    let blocks: Vec<readability::Block> = caps.iter().map(|c| readability::Block { start: c.1, end: c.2, chars: c.3 }).collect();
+    let before = blocks.iter().filter(|b| readability::too_fast(b, rate)).count();
+    let (times, still) = readability::readable_times(&blocks, rate, media_end.filter(|e| e.0 > 0));
+    let changes: Vec<(ClipId, Tick, Tick)> = caps.iter().zip(times.iter()).filter(|(c, t)| c.1 != t.0 || c.2 != t.1).map(|(c, t)| (c.0, t.0, t.1)).collect();
+    let fixed = changes.len();
+    if fixed > 0 {
+        s.edit_sequence("Túl gyors feliratok javítása", move |q, _, _| {
+            if let Some(t) = q.caption_tracks.iter_mut().find(|t| t.id == track) {
+                for c in t.captions.iter_mut() {
+                    if let Some((_, start, end)) = changes.iter().find(|x| x.0 == c.id) {
+                        c.start = *start;
+                        c.duration = Tick(end.0.saturating_sub(start.0));
+                    }
+                }
+            }
+            Ok(())
+        })?;
+    }
+    let still: Vec<ClipId> = still.iter().filter_map(|i| caps.get(*i)).map(|c| c.0).collect();
+    if !still.is_empty() {
+        s.state.caption_selection = still.clone();
+    }
+    Ok(json!({"tooFast": before, "fixed": fixed, "stillTooFast": still.iter().map(|c| c.0).collect::<Vec<_>>()}))
+}
+
+fn reading_speed_message(r: &Value) -> String {
+    let n = |k: &str| r.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let still = r.get("stillTooFast").and_then(Value::as_array).map_or(0, Vec::len);
+    match (n("tooFast"), still) {
+        (0, _) => "Minden felirat elég ideig látszik ahhoz, hogy el lehessen olvasni".into(),
+        (_, 0) => format!("{} túl gyors felirat javítva: tovább látszanak, a beszéd szüneteibe nyúlva", n("fixed")),
+        (_, k) => format!("{} túl gyors felirat javítva; {k} feliratnak nincs elég hely, ezek ki vannak jelölve: rövidítsd vagy vond össze őket", n("fixed")),
+    }
+}
+
+fn fix_reading_speed(s: &mut Session, p: &Value) -> Result<Value> {
+    let track = work_track(s, p).ok_or_else(|| bad("like.fixReadingSpeed", "no caption track"))?;
+    let r = fix_reading_speed_on(s, track)?;
+    s.toast(reading_speed_message(&r));
+    Ok(r)
+}
+
+/// Sequence ▸ LIKE ▸ Egygombos előkészítés: everything before the hand work in one click.
+/// The transcript comes first (in the background when there is none); then the rough cut, the
+/// retakes and spoken cut cues (cut, or with `"retakes": "mark"` only marked for review),
+/// captions with readable timing, audio clean-up, and last the AI correction in the background.
+/// Each step is its own undo step.
+fn auto_prep(s: &mut Session, p: &Value) -> Result<Value> {
+    engine_exe(s, "like.autoPrep")?;
+    if !has_sequence_transcript(s) || bool_p(p, "retranscribe").unwrap_or(false) {
+        return start_transcribe(s, p, Then::AutoPrep(p.clone()));
+    }
+    auto_prep_now(s, p)
+}
+
+fn auto_prep_now(s: &mut Session, p: &Value) -> Result<Value> {
+    let cut = quick_cut_now(s, p)?;
+    let (marked, cues) = mark_retakes_quiet(s)?;
+    let review = str_p(p, "retakes") == Some("mark");
+    let retakes_cut = if !review && marked + cues > 0 { cut_marked_retakes(s, &json!({}))?.get("removed").and_then(Value::as_u64).unwrap_or(0) } else { 0 };
+    // drop the caption-style options a caller may pass along for the rough cut
+    let captions = create_captions_now(s, &json!({"maxChars": p.get("maxChars"), "lines": p.get("lines")}))?;
+    let track = s.active_sequence().and_then(|q| q.caption_tracks.last()).map(|t| t.id);
+    let speed = match track {
+        Some(t) => fix_reading_speed_on(s, t)?,
+        None => Value::Null,
+    };
+    let audio = if bool_p(p, "cleanAudio").unwrap_or(true) && !audio_clips(s).is_empty() { Some(clean_audio(s, &json!({}))?) } else { None };
+    // the AI correction needs the engine's AI provider: its failure must not undo the rest
+    let ai = if bool_p(p, "ai").unwrap_or(true) && track.is_some() {
+        match correct_captions(s, &json!({"track": track, "wait": bool_p(p, "wait").unwrap_or(false), "fixReadingSpeed": true})) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                s.error_toast("like", format!("LIKE: AI-javítás: {e}"));
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let n = |v: &Value, k: &str| v.get(k).and_then(Value::as_u64).unwrap_or(0);
+    let mut msg = format!("Előkészítés kész: {} töltelékszó és {} szünet kivágva, ", n(&cut, "fillers"), n(&cut, "pauses"));
+    if review {
+        msg.push_str(&format!("{} ismétlés megjelölve (nézd át, majd: Megjelölt ismétlések kivágása), ", marked + cues));
+    } else {
+        msg.push_str(&format!("{retakes_cut} ismétlés kivágva, "));
+    }
+    msg.push_str(&format!("{} felirat", n(&captions, "captions")));
+    if ai.as_ref().is_some_and(|a| a.get("background").and_then(Value::as_bool) == Some(true)) {
+        msg.push_str("; az AI-javítás a háttérben fut");
+    }
+    s.toast(msg);
+    Ok(json!({
+        "cut": cut,
+        "retakes": {"marked": marked, "spokenCues": cues, "cut": retakes_cut, "review": review},
+        "captions": captions,
+        "readingSpeed": speed,
+        "audio": audio,
+        "ai": ai,
+    }))
+}
+
+fn work_time(s: &mut Session, p: &Value) -> Result<Value> {
+    let reset = bool_p(p, "reset").unwrap_or(false);
+    let t = worktime::report(s, reset);
+    let line = if reset { "A munkaidő-számláló nullázva".to_string() } else { worktime::summary(&t) };
+    s.toast(line.clone());
+    let mut v = serde_json::to_value(&t).map_err(|e| engine_err(e.to_string()))?;
+    if let Some(o) = v.as_object_mut() {
+        o.insert("summary".into(), json!(line));
+        o.insert("measured".into(), json!(s.persistence.is_some()));
+    }
+    Ok(v)
+}
+
 pub fn commands() -> Vec<CommandSpec> {
     let mut v = vec![
+        spec(
+            "like.autoPrep",
+            "Egygombos előkészítés (vágás, ismétlések, felirat, hang, AI)",
+            r#"{"retakes":"cut"|"mark"="cut","ai":bool=true,"cleanAudio":bool=true,"fillers":[str]|"extended"?,"minSeconds":f=0.6?}"#,
+            has_engine,
+            auto_prep,
+        ),
         spec(
             "like.quickCut",
             "Gyors durva vágás (szünetek, töltelékhangok)",
@@ -1132,6 +1300,7 @@ pub fn commands() -> Vec<CommandSpec> {
         spec("like.transcribe", "Magyar leirat készítése", r#"{"items":[id]?}"#, has_engine, transcribe),
         spec("like.createCaptions", "Magyar felirat készítése", r#"{"maxChars":n=42?,"lines":n=2?,"name":str?}"#, has_engine, create_captions),
         spec("like.correctCaptions", "Felirat AI-javítása (helyesírás, ragozás)", r#"{"track":id|"C1"?}"#, has_engine_and_captions, correct_captions),
+        spec("like.fixReadingSpeed", "Túl gyors feliratok javítása", r#"{"track":id|"C1"?}"#, has_captions, fix_reading_speed),
         spec("like.moveWordNext", "Utolsó szó át a következő feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, true)),
         spec("like.moveWordPrev", "Első szó vissza az előző feliratba", r#"{"caption":id?}"#, has_captions, |s, p| move_word(s, p, false)),
         spec("like.captionStyle.social", "Feliratstílus: közösségi (álló videó)", r#"{"track":id|"C1"?}"#, has_caption_track, |s, p| {
@@ -1152,6 +1321,9 @@ pub fn commands() -> Vec<CommandSpec> {
     ];
     // the ported detector's own commands (agents, tests); not in menus
     v.extend(repeats::commands());
+    let mut time = spec("like.workTime", "Munkaidő ezen a projekten", r#"{"reset":bool?}"#, |_| Ok(()), work_time);
+    time.journal = false;
+    v.push(time);
     let mut settings = spec("like.openEngineSettings", "LIKE motor beállításai (szótár, modell, AI)…", "{}", engine_installed, open_engine_settings);
     settings.journal = false;
     v.push(settings);
@@ -1381,6 +1553,53 @@ mod tests {
     fn quick_cut_message_reads_well() {
         let m = quick_cut_message(&json!({"fillers": 3, "pauses": 12, "seconds": 41.26}));
         assert_eq!(m, "Durva vágás kész: 3 töltelékszó és 12 szünet kivágva (41,3 mp)");
+    }
+
+    #[test]
+    fn too_fast_captions_are_fixed_in_one_undo_step() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        // 34 characters in half a second, silence after it; then one with no room at all
+        s.execute("captions.add", json!({"text": "Ez a felirat túl gyorsan eltűnik!", "seconds": 1.0, "durationSeconds": 0.5})).unwrap();
+        s.execute("captions.add", json!({"text": "Rövid", "seconds": 4.0, "durationSeconds": 2.0})).unwrap();
+        s.execute("captions.add", json!({"text": "Ide sok szöveg került, ami nem fér el ennyi idő alatt", "seconds": 6.0, "durationSeconds": 0.4})).unwrap();
+        s.execute("captions.add", json!({"text": "Utána", "seconds": 6.4, "durationSeconds": 1.6})).unwrap();
+        let undo = s.history.undo.len();
+        let r = s.execute("like.fixReadingSpeed", json!({})).unwrap();
+        assert_eq!(r["tooFast"], 2, "{r}");
+        assert_eq!(r["stillTooFast"].as_array().map(Vec::len), Some(1), "{r}");
+        assert_eq!(s.history.undo.len(), undo + 1, "one undo step");
+        let q = s.active_sequence().unwrap();
+        let t = &q.caption_tracks[0];
+        let mut caps: Vec<_> = t.captions.iter().collect();
+        caps.sort_by_key(|c| c.start);
+        assert!(caps[0].duration.seconds() >= 1.9, "{:?}", caps[0]);
+        for w in caps.windows(2) {
+            assert!(w[0].end() <= w[1].start, "no overlap: {caps:?}");
+        }
+        // the one that cannot be fixed is selected for the user
+        let still = ClipId(r["stillTooFast"][0].as_u64().unwrap());
+        assert_eq!(s.state.caption_selection, vec![still]);
+        // nothing left to do: no new undo step
+        let r2 = s.execute("like.fixReadingSpeed", json!({})).unwrap();
+        assert_eq!(r2["fixed"], 0, "{r2}");
+        assert_eq!(s.history.undo.len(), undo + 1);
+    }
+
+    #[test]
+    fn work_time_reports_without_a_saved_project() {
+        let mut s = Session::default();
+        s.execute("file.openDemoProject", json!({})).unwrap();
+        let r = s.execute("like.workTime", json!({})).unwrap();
+        assert!(r["summary"].as_str().unwrap().starts_with("Munkaidő ezen a projekten"), "{r}");
+        assert_eq!(r["measured"], false);
+    }
+
+    #[test]
+    fn reading_speed_messages() {
+        assert!(reading_speed_message(&json!({"tooFast": 0})).starts_with("Minden felirat"));
+        assert!(reading_speed_message(&json!({"tooFast": 3, "fixed": 3, "stillTooFast": []})).starts_with("3 túl gyors"));
+        assert!(reading_speed_message(&json!({"tooFast": 3, "fixed": 2, "stillTooFast": [7]})).contains("1 feliratnak"));
     }
 
     #[test]

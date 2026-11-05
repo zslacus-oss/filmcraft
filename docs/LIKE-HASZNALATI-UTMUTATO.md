@@ -25,7 +25,19 @@ rendszergazdai jogot.
    Parakeet V3 modellt használja (szóidővel); ha nincs letöltve, a Diktálás modellkezelőjében töltsd
    le. A hosszú felvételeket (fél óra is) a szüneteknél darabolva dolgozza fel.
 
-## A munkafolyamat
+## A leggyorsabb út: egygombos előkészítés
+
+1. Importáld a felvételt, és húzd az idővonalra.
+2. **Szekvencia ▸ LIKE ▸ Egygombos előkészítés.** Ez egymás után elvégzi a lenti táblázat 3–5., 7–8.
+   és 10. lépését: magyar leirat, durva vágás, az ismételt mondatok és a szóbeli vágási jelek
+   („ezt vágjuk ki”) kivágása, magyar felirat, a túl gyors feliratok javítása, hangtisztítás, végül
+   az AI-javítás a háttérben. A Folyamat panelen látod, hol tart.
+3. Nézd végig a Felirat munkaterületen, simíts, ahol kell, és exportálj.
+
+Minden lépés külön visszavonható (Ctrl+Z). Ha az ismétléseket előbb át akarod nézni, a lépéseket
+egyenként is futtathatod a táblázat szerint.
+
+## A munkafolyamat lépésenként
 
 | Lépés | Hol | Mit csinál |
 |---|---|---|
@@ -37,6 +49,7 @@ rendszergazdai jogot.
 | 6. Finom vágás | idővonal, Szöveg panel ▸ Leirat | szöveg alapján: jelöld ki a felesleges mondatot, és Kivonás |
 | 7. **Magyar felirat** | Szekvencia ▸ LIKE ▸ Magyar felirat készítése | a megvágott leiratból magyar szabályú felirat (42 karakter, 2 sor, névelő nem marad sor végén) |
 | 8. **AI-javítás** | Szekvencia ▸ LIKE ▸ Felirat AI-javítása | helyesírás, ragozás, szótárad szakszavai; az időzítés nem változik |
+| 8b. **Túl gyors feliratok** | Szekvencia ▸ LIKE ▸ Túl gyors feliratok javítása | amelyik felirat túl hamar eltűnik (17 karakter/mp felett, vagy 1 mp-nél rövidebb), az a beszéd szüneteibe nyúlva tovább látszik; ahol nincs rá hely, azokat kijelöli, hogy rövidítsd vagy vond össze őket. Az AI-javítás után érdemes újra futtatni |
 | 9. Kézi simítás | Ablak ▸ Munkaterületek ▸ **Felirat** (balra a feliratszerkesztő, középen a kép, alul az idővonal) | szöveg átírása; ✂ kettévágás, összevonás; „Utolsó szó át a következő feliratba" / „Első szó vissza az előző feliratba" |
 | 10. **Hangtisztítás** | Szekvencia ▸ LIKE ▸ Hangtisztítás | zajszűrés, dübörgés- és zúgásszűrés (50 Hz), hangosság-kiegyenlítés minden hangklipen |
 | 11. Stílus | Szekvencia ▸ LIKE ▸ Feliratstílus: klasszikus / közösségi, vagy kézzel: Szöveg panel ▸ Feliratok, stíluscsík | klasszikus: alul, áttetsző sávon (YouTube); közösségi: nagy, félkövér, körvonalas. Saját stílust is beállíthatsz, azt az export nem írja felül |
@@ -46,20 +59,17 @@ rendszergazdai jogot.
 
 A LIKE-lépések mind visszavonhatók (Ctrl+Z).
 
-## Mérd az időt
+## Mennyi idő ment el rá?
 
-A cél a 6–8 órás munka drasztikus csökkentése. Egy-két videónál írd fel, mennyi ideig tartott:
+**Szekvencia ▸ LIKE ▸ Munkaidő ezen a projekten.** A program magától méri, mennyit dolgoztál a
+projekten. Munkának számít minden szerkesztés és a lejátszás; az 5 percnél hosszabb szünet nem
+számít bele. A kimutatás fajtánként bontja az időt (vágás, felirat, hang, szín, grafika,
+megtekintés), megmutatja, hány napon dolgoztál rajta, és mennyit dolgozott közben a gép (leirat,
+AI). Az adatok a projektfájl mellé kerülnek (`<projekt>.fcproj.like-munkaido.json`). Mentetlen
+projektnél az első mentéskor átkerülnek a projekt mellé.
 
-| Szakasz | Lépések | Perc |
-|---|---|---|
-| Gépi előkészítés | 1–5. (import, durva vágás, ismétlések) | |
-| Kézi vágás | 6. | |
-| Felirat | 7–9. | |
-| Kép és hang | 10–11. | |
-| Export és poszt-szöveg | 12–13. | |
-| **Összesen** | | |
-
-Ahol a legtöbb perc megy el, oda kerül a következő fejlesztés.
+A cél a régi 6–8 óra drasztikus csökkentése. Ahol a legtöbb idő megy el, oda kerül a következő
+fejlesztés.
 
 ## Ha valami nem megy
 

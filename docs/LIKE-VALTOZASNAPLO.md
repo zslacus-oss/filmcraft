@@ -7,6 +7,44 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-05 – #11 Egygombos előkészítés, olvasható feliratidőzítés, munkaidő-mérés
+
+Mentési pont előtte: `backup_20261105_elotte_like11` címke. Upstream fájl nem változott.
+
+**ÚJ – Szekvencia ▸ LIKE ▸ Egygombos előkészítés** (`like.autoPrep`): leirat (ha még nincs, a
+háttérben), durva vágás, az ismétlések és a szóbeli vágási jelek kivágása, magyar felirat, a túl
+gyors feliratok javítása, hangtisztítás, végül az AI-javítás a háttérben, utána újabb
+olvashatósági javítással. `"retakes": "mark"` esetén az ismétléseket csak megjelöli átnézésre.
+Ha az AI-szolgáltató nem érhető el, a többi lépés megmarad, és hibaüzenet jelzi az okát.
+CSERE: `like_tools.rs` – `mark_retakes` két részre vált: a csendes jelölés (`mark_retakes_quiet`)
+és az üzenet. Az előkészítés így nem írja ki a „töröld a jelölőjét” tanácsot.
+
+**ÚJ – Szekvencia ▸ LIKE ▸ Túl gyors feliratok javítása** (`like.fixReadingSpeed`,
+`like_tools/readability.rs`): ami 17 karakter/mp-nél gyorsabb vagy 1 mp-nél rövidebb, azt előbb a
+következő felirat előtti szünetbe nyújtja, majd az előző utániba. Legfeljebb 7 mp-ig nyújt, és
+2 képkocka szünetet hagy a feliratok között, átfedés nélkül. Egy visszavonható lépés. Amit nem
+lehet javítani, azt kijelöli.
+
+**ÚJ – Szekvencia ▸ LIKE ▸ Munkaidő ezen a projekten** (`like.workTime`, `like_tools/worktime.rs`):
+az asztali program magától méri az aktív munkát. Munka a szerkesztés és a lejátszás; az 5 percnél
+hosszabb szünet nem számít. Fajtánként (vágás, felirat, hang, szín, grafika, megtekintés), naponként,
+plusz a LIKE-feladatok gépideje. Tárolás: `<projekt>.fcproj.like-munkaido.json`, legfeljebb
+percenként írva. A mentetlen projekt ideje az első mentéskor átkerül. A parancssori futás és a
+tesztek nem mérnek (csak az automatikus mentést futtató munkamenet). A nap a FilmCraft saját helyi
+időeltolódásával, chrono-val számolódik.
+
+**Élő próba** (valódi motor és AI, 90 mp-es videó): az egygombos előkészítés 16 mp alatt lefutott.
+Az eredmény azonos a lépésenkénti lánccal (szekvenciahossz, 13 felirat, hangtisztítás 50 Hz,
+ismétlésjelölő nem maradt). A leghosszabb sor 42 karakter, a „LIKE CRM” helyes.
+
+**Tesztek:** a LIKE-tesztek zöldek (54, köztük 13 új: időzítés, átfedésmentesség, ellenséges
+értékek, egy visszavonási lépés, munkaidő-könyvelés, sérült fájl, helyi nap), a felület menü- és
+fordítási tesztjei is zöldek. A motor teljes készlete: 942 zöld, 1 hibás. A hibás az ismert upstream teszt
+(`single_frame_in_out_exports_warn_without_changing_the_output`, Windows-fájlzár). Tegnap, ezek
+előtt a változtatások előtt is elbukott; nem a mi kódunk.
+
+---
+
 ## 2026-11-05 – #10 Upstream frissítés, új Diktálás-motor, közös telepítő
 
 **Upstream frissítés:** 23 új FilmCraft-commit beolvasztva ütközés nélkül (többek közt
