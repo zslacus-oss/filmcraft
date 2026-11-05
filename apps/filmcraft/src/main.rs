@@ -184,7 +184,7 @@ fn main() -> eframe::Result {
 fn native_options(agent: bool) -> eframe::NativeOptions {
     eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_title("FilmCraft")
+            .with_title("Like FilmCraft") // LIKE: own name (docs/LIKE-VALTOZASNAPLO.md #12)
             .with_inner_size([1600.0, 980.0])
             .with_min_inner_size([900.0, 560.0])
             .with_drag_and_drop(true)

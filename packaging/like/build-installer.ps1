@@ -24,8 +24,10 @@ if (-not (Test-Path $Makensis)) { throw "NSIS not found: $Makensis" }
 if ($Version -eq "") {
     $cargo = Get-Content (Join-Path $Root "Cargo.toml") -Raw
     $base = [regex]::Match($cargo, '(?m)^version\s*=\s*"([^"]+)"').Groups[1].Value
-    $subjects = git -C $Root log --format=%s
-    $likeNo = ($subjects | Select-String -Pattern '^LIKE #(\d+)' | Select-Object -First 1).Matches[0].Groups[1].Value
+    # the LIKE release number lives in one place: LIKE_RELEASE in crates/engine/src/like_tools.rs
+    $tools = Get-Content (Join-Path $Root "crates\engine\src\like_tools.rs") -Raw
+    $likeNo = [regex]::Match($tools, 'LIKE_RELEASE:\s*u32\s*=\s*(\d+)').Groups[1].Value
+    if ($likeNo -eq "") { throw "LIKE_RELEASE not found in like_tools.rs" }
     $Version = "$($base)-like.$($likeNo)"
 }
 

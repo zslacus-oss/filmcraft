@@ -3799,3 +3799,4 @@
 	Ticked attributes are removed from the selected clips.	A bejelölt jellemzők törlődnek a kijelölt klipekről.
 	When enabled, GIF transparency is on/off: alpha below 128 is transparent; 128 and above is opaque.	Bekapcsolva a GIF átlátszósága kétállású: 128 alatti alfa átlátszó, 128 és fölötte átlátszatlan.
 	{name} already exists, so nothing was exported. To replace it, choose it in the save dialog.	{name} már létezik, ezért nem történt export. Felülíráshoz válaszd ki a mentési ablakban.
+	Built on FilmCraft, with Hungarian rough cut, captions and AI tools (LIKE).	FilmCraft alapokon, magyar durva vágással, felirattal és AI-eszközökkel (LIKE).

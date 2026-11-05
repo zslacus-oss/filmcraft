@@ -470,8 +470,11 @@ fn about_tab(app: &mut FilmcraftApp, ui: &mut egui::Ui) {
     let (r, _) = ui.allocate_exact_size(egui::vec2(ui.available_width(), 30.0), egui::Sense::hover());
     crate::brand::paint_wordmark(ui, egui::pos2(r.min.x, r.center().y), 20.0, app.ui.dark);
     ui.add_space(6.0);
-    ui.heading("FilmCraft");
-    ui.label(tlf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
+    // LIKE: own name and release (docs/LIKE-VALTOZASNAPLO.md #12)
+    ui.heading(filmcraft_engine::like_tools::PRODUCT_NAME);
+    let version = format!("{}-like.{}", env!("CARGO_PKG_VERSION"), filmcraft_engine::like_tools::LIKE_RELEASE);
+    ui.label(tlf!("Version {version}", version = version));
+    ui.label(tl!("Built on FilmCraft, with Hungarian rough cut, captions and AI tools (LIKE)."));
     ui.label(tl!("A clean-room, pure-Rust non-linear video editor. Part of the ArtCraft family."));
     ui.add_space(10.0);
     let mut link = |ui: &mut egui::Ui, id: &str, icon: Icon, label: &str, url: &str, primary: bool| {

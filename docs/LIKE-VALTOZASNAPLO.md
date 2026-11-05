@@ -7,6 +7,24 @@ Visszaállás bármelyik mentési pontra: `git reset --hard <commit>` (a commit-
 
 ---
 
+## 2026-11-05 – #12 Saját név: Like FilmCraft
+
+**Miért:** a program a Névjegyben és az ablakcímben „FilmCraft 0.17.0”-nak nevezte magát, ezért
+úgy tűnt, mintha az eredeti FilmCraft futna, nem a továbbfejlesztett változat.
+
+- CSERE (upstream, 1 sor): `apps/filmcraft/src/main.rs` – az ablak címe „Like FilmCraft”.
+- CSERE (upstream): `apps/filmcraft/build.rs` – az exe adatai (ProductName, FileDescription).
+- CSERE (upstream, 2 sor + 1 sor): `crates/ui-egui/src/panels/dialogs.rs` – a Névjegy fejléce
+  „Like FilmCraft”, verzió `0.17.0-like.12`, és egy mondat arról, hogy FilmCraft alapú.
+  HOZZÁADÁS: `hu.tsv` (a mondat magyarul).
+- HOZZÁADÁS: `like_tools.rs` – `PRODUCT_NAME` és `LIKE_RELEASE` (a LIKE-kiadás száma egy helyen;
+  minden számozott bejegyzésnél eggyel nő). A telepítő verzióját is ebből veszi.
+- **Szándékosan nem változott:** az eframe-alkalmazásazonosító („FilmCraft”), mert abból számolódik
+  a beállítások mappája; átírásával elvesznének a meglévő beállítások. A Súgó menü „FilmCraft on
+  GitHub” pontja az eredeti projektre mutat, ez helyes.
+
+---
+
 ## 2026-11-05 – #11 Egygombos előkészítés, olvasható feliratidőzítés, munkaidő-mérés
 
 Mentési pont előtte: `backup_20261105_elotte_like11` címke. Upstream fájl nem változott.

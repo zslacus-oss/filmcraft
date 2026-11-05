@@ -44,6 +44,12 @@ pub mod worktime;
 
 const MENU: &[&str] = &["Sequence", "LIKE"];
 
+/// The product name of this FilmCraft edition (window title, About).
+pub const PRODUCT_NAME: &str = "Like FilmCraft";
+/// The LIKE release on top of the FilmCraft version (`0.17.0-like.12`); raised with every
+/// numbered entry of docs/LIKE-VALTOZASNAPLO.md.
+pub const LIKE_RELEASE: u32 = 12;
+
 /// Hesitation sounds removed by the rough cut: never meaningful words.
 pub const HU_FILLERS: &[&str] = &["ö", "öö", "ööö", "öhm", "őő", "ő", "hmm", "hm", "mm", "mhm", "izé"];
 
