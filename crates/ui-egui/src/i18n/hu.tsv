@@ -135,7 +135,7 @@
 	Add custom color	Egyéni szín hozzáadása
 	Add custom color…	Egyéni szín hozzáadása…
 	Add keyframe	Kulcskocka hozzáadása
-	Add media to your project. Drop files anywhere in the window, or choose a source below.	Adj médiát a projekthez. Húzd a fájlokat bárhová az ablakba, vagy válassz alább egy forrást.
+	Add media to your project. Drop files or folders anywhere in the window, or choose a source below.	Adj médiát a projekthez. Húzd a fájlokat vagy mappákat bárhová az ablakba, vagy válassz alább egy forrást.
 	Add to Favorites	Hozzáadás a kedvencekhez
 	Add to favorites	Hozzáadás a kedvencekhez
 	Add tracks automatically when editing source clips onto the Timeline	Sávok automatikus hozzáadása, amikor forrásklipeket teszel az idővonalra
@@ -3742,3 +3742,60 @@
 	✔ same file	✔ ugyanaz a fájl
 	✖ different file	✖ másik fájl
 	Subtitles	Felirat
+	1 frame ({seconds} s)	1 képkocka ({seconds} mp)
+	{frames} frames ({seconds} s)	{frames} képkocka ({seconds} mp)
+	10-bit color	10 bites szín
+	Add Track	Sáv hozzáadása
+	Delete Track	Sáv törlése
+	Delete Clips	Klipek törlése
+	All Intra	Csak kulcsképkockák (All Intra)
+	Every frame a keyframe (edit-friendly, larger files)	Minden képkocka kulcsképkocka (könnyen vágható, nagyobb fájl)
+	Caption Export Settings	Feliratexport beállításai
+	Copy of the project saved to {path}	A projekt másolata elmentve ide: {path}
+	Project saved to {path}	A projekt elmentve ide: {path}
+	Cut Retakes	Ismétlések kivágása
+	Exported {path} as {format}, from its file extension	{path} exportálva {format} formátumban (a kiterjesztés alapján)
+	From preset file:	Sablonfájlból:
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 10 Mbps, loudness normalized to −14 LUFS	H.264 9:16 álló, kitöltésre méretezve, VBR 1 menet, 10 Mbps, hangosság −14 LUFS-ra igazítva
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 12 Mbps, loudness normalized to −14 LUFS	H.264 9:16 álló, kitöltésre méretezve, VBR 1 menet, 12 Mbps, hangosság −14 LUFS-ra igazítva
+	H.264 9:16 portrait, scaled to fill, VBR 1 pass, 8 Mbps, loudness normalized to −14 LUFS	H.264 9:16 álló, kitöltésre méretezve, VBR 1 menet, 8 Mbps, hangosság −14 LUFS-ra igazítva
+	H.264 High 10 (10-bit 4:2:0) at the sequence's size, constant quality CRF 16, AAC 320 kbps; a 10-bit master	H.264 High 10 (10 bites 4:2:0) a szekvencia méretében, állandó minőség CRF 16, AAC 320 kbps; 10 bites mesterpéldány
+	H.264 High 10 Intra	H.264 High 10 Intra
+	H.264 High 10 Intra (10-bit 4:2:0, every frame a keyframe), CRF 12, AAC 320 kbps; an edit-friendly intermediate	H.264 High 10 Intra (10 bites 4:2:0, minden képkocka kulcsképkocka), CRF 12, AAC 320 kbps; könnyen vágható köztes fájl
+	H.264 High 10 Master	H.264 High 10 mesterpéldány
+	High 10	High 10
+	Highlight Balance	Csúcsfények egyensúlya
+	Highlight Hue	Csúcsfények színárnyalata
+	Highlight Level	Csúcsfények szintje
+	Highlight Softness	Csúcsfények lágysága
+	Midtone Balance	Középtónusok egyensúlya
+	Midtone Hue	Középtónusok színárnyalata
+	Midtone Level	Középtónusok szintje
+	Shadow Balance	Árnyékok egyensúlya
+	Shadow Hue	Árnyékok színárnyalata
+	Shadow Level	Árnyékok szintje
+	Shadow Softness	Árnyékok lágysága
+	Shadow Threshold	Árnyékok küszöbe
+	Three-Way Color Corrector	Háromutas színkorrekció
+	Tonal Range	Tónustartomány
+	Key Out Brights	Világos részek kiúsztatása
+	Imported {n} preset(s)	{n} sablon importálva
+	Imported {n} preset(s); not imported: {error}	{n} sablon importálva; nem importált: {error}
+	Imported {n} preset(s); {skipped} skipped	{n} sablon importálva; {skipped} kihagyva
+	Imported {n} preset(s); {warnings} with unsupported parameters	{n} sablon importálva; {warnings} nem támogatott paraméterekkel
+	Instagram Reels 1080×1920	Instagram Reels 1080×1920
+	TikTok 1080×1920	TikTok 1080×1920
+	YouTube Shorts 1080×1920	YouTube Shorts 1080×1920
+	Maintain Audio Pitch	Hangmagasság megtartása
+	No presets folder: the app has no data directory	Nincs sablonmappa: a programnak nincs adatmappája
+	Open Presets Folder	Sablonmappa megnyitása
+	Scan Presets Folder	Sablonmappa átvizsgálása
+	Preset library is up to date	A sablontár naprakész
+	Preset library updated	A sablontár frissült
+	Preset library updated: {imported} loaded, {removed} removed	A sablontár frissült: {imported} betöltve, {removed} eltávolítva
+	Responsive Design – Time remaps the graphic's layer keyframes; clip effects like Opacity and Motion keep media time	Reszponzív kialakítás – Az idő a grafika rétegeinek kulcsképkockáit igazítja; a klipeffektusok (Átlátszóság, Mozgás) a média idejét követik
+	Set as Default Transition	Beállítás alapértelmezett áttűnésként
+	Source In/Out is only 1 frame. Choose Entire Source to export the whole sequence.	A forrás be- és kipontja között csak 1 képkocka van. A teljes szekvencia exportjához válaszd a Teljes forrás lehetőséget.
+	Ticked attributes are removed from the selected clips.	A bejelölt jellemzők törlődnek a kijelölt klipekről.
+	When enabled, GIF transparency is on/off: alpha below 128 is transparent; 128 and above is opaque.	Bekapcsolva a GIF átlátszósága kétállású: 128 alatti alfa átlátszó, 128 és fölötte átlátszatlan.
+	{name} already exists, so nothing was exported. To replace it, choose it in the save dialog.	{name} már létezik, ezért nem történt export. Felülíráshoz válaszd ki a mentési ablakban.
